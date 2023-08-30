@@ -1,18 +1,32 @@
 package parser
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"strings"
 
+	"github.com/denizgursoy/cacik/internal/app"
 	"github.com/denizgursoy/cacik/internal/executor"
 )
 
-func GetComments(path string) {
+type GoSourceFileParser struct {
+}
+
+func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, s string) (
+	[]app.FunctionDescriptor, error) {
+
+}
+
+func NewGoSourceFileParser() *GoSourceFileParser {
+	return &GoSourceFileParser{}
+}
+
+func GetComments(functionDirectory string) {
 	fileSet := token.NewFileSet()
-	dir, err := parser.ParseDir(fileSet, path, nil, parser.ParseComments)
+	dir, err := parser.ParseDir(fileSet, functionDirectory, nil, parser.ParseComments)
 	if err != nil {
 		return
 	}
