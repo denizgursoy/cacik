@@ -12,8 +12,10 @@ func NewCucumberRunner() *CucumberRunner {
 	return &CucumberRunner{}
 }
 
-func (c *CucumberRunner) SetConfig(runner *models.Config) *CucumberRunner {
-	c.config = runner
+func (c *CucumberRunner) SetConfig(configFunction func() *models.Config) *CucumberRunner {
+	if configFunction != nil {
+		c.config = configFunction()
+	}
 
 	return c
 }

@@ -26,25 +26,25 @@ type (
 )
 
 func (o *Output) Generate(output Output, writer io.Writer) error {
-	f := jen.NewFile("main")
-	f.ImportNames(o.Imports)
-	line := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
+	mainFile := jen.NewFile("main")
+	mainFile.ImportNames(o.Imports)
+	functionBody := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
 
 	if output.ConfigFunction != nil {
-		line.Id("SetConfig").Call(jen.Qual(output.ConfigFunction.PackageName, output.ConfigFunction.Name)).Id(".").Line()
+		functionBody.Id("SetConfig").Call(jen.Qual(output.ConfigFunction.PackageName, output.ConfigFunction.Name)).Id(".").Line()
 	}
 
 	for _, function := range output.StepFunctions {
-		line.Id("RegisterStep").Call(jen.Id(function.StepName), jen.Qual(function.Import, function.Name)).Id(".").Line()
+		functionBody.Id("RegisterStep").Call(jen.Id(function.StepName), jen.Qual(function.Import, function.Name)).Id(".").Line()
 	}
-	line.Id("Run").Call().Line().Line()
-	line.If(jen.Id("err").Op("!=").Nil()).Block(
+	functionBody.Id("Run").Call().Line().Line()
+	functionBody.If(jen.Id("err").Op("!=").Nil()).Block(
 		jen.Qual("log", "Fatal").Call(jen.Id("err")),
 	)
 
-	f.Func().Id("main").Params().Block(line)
+	mainFile.Func().Id("main").Params().Block(functionBody)
 
-	_, err := writer.Write([]byte(f.GoString()))
+	_, err := writer.Write([]byte(mainFile.GoString()))
 
 	return err
 }
