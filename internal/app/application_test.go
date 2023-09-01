@@ -18,7 +18,7 @@ func TestStartApplication(t *testing.T) {
 		mockGoCodeParser.
 			EXPECT().
 			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), dir).
-			Return([]FunctionDescriptor{}, nil).
+			Return([]FunctionLocator{}, nil).
 			Times(1)
 
 		StartApplication(mockGoCodeParser, mockGherkinParser)
@@ -36,7 +36,7 @@ func TestStartApplication(t *testing.T) {
 			mockGoCodeParser.
 				EXPECT().
 				ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), s).
-				Return([]FunctionDescriptor{}, nil).
+				Return([]FunctionLocator{}, nil).
 				Times(1)
 		}
 

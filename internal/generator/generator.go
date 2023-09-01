@@ -13,7 +13,7 @@ type (
 )
 
 var (
-	//go:embed output.txt
+	//go:embed testdata/output.go
 	templateContent string
 )
 
@@ -21,7 +21,7 @@ func NewGoCodeGenerator() *GoCodeGenerator {
 	return &GoCodeGenerator{}
 }
 
-func (g *GoCodeGenerator) Name() {
+func (g *GoCodeGenerator) Generate() {
 	tmpl := template.Must(template.New("goCode").Parse(templateContent))
 
 	file, err := os.Create("main.go")

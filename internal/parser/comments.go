@@ -16,7 +16,7 @@ type GoSourceFileParser struct {
 }
 
 func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, s string) (
-	[]app.FunctionDescriptor, error) {
+	[]app.FunctionLocator, error) {
 	return nil, nil
 }
 

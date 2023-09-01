@@ -1,8 +1,19 @@
 package app
 
 type (
-	FunctionDescriptor struct {
-		Package string
-		Name    string
+	FunctionLocator struct {
+		PackageName string
+		Name        string
+		Import      string
+	}
+
+	StepFunctionLocator struct {
+		StepName string
+		FunctionLocator
+	}
+
+	Output struct {
+		ConfigFunction *FunctionLocator
+		StepFunctions  []*StepFunctionLocator
 	}
 )
