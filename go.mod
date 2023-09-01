@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/dave/jennifer v1.7.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/gofrs/uuid v4.3.1+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
