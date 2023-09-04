@@ -7,33 +7,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestOutput_Generate(t *testing.T) {
-
-	t.Run("should generate correct output files", func(t *testing.T) {
-		data := Output{
-			ConfigFunction: &FunctionLocator{
-				PackageName: "a",
-				Name:        "ConfigFunction",
-			},
-			StepFunctions: []*StepFunctionLocator{
-				{
-					StepName: `"^step 1$"`,
-					FunctionLocator: &FunctionLocator{
-						PackageName: "package1",
-						Name:        "Step1Function",
-					},
-				},
-				{
-					StepName: `"^step 2$"`,
-					FunctionLocator: &FunctionLocator{
-						PackageName: "package2",
-						Name:        "Step2Function",
-					},
+var (
+	data = Output{
+		ConfigFunction: &FunctionLocator{
+			FullPackageName: "a",
+			FunctionName:    "ConfigFunction",
+		},
+		StepFunctions: []*StepFunctionLocator{
+			{
+				StepName: `"^step 1$"`,
+				FunctionLocator: &FunctionLocator{
+					FullPackageName: "package1",
+					FunctionName:    "Step1Function",
 				},
 			},
-		}
+			{
+				StepName: `"^step 2$"`,
+				FunctionLocator: &FunctionLocator{
+					FullPackageName: "package2",
+					FunctionName:    "Step2Function",
+				},
+			},
+		},
+	}
 
-		expected := `package main
+	expected = `package main
 
 import (
 	a "a"
@@ -53,12 +51,14 @@ func main() {
 	}
 }
 `
+)
 
+func TestOutput_Generate(t *testing.T) {
+	t.Run("should generate correct output files", func(t *testing.T) {
 		builder := &strings.Builder{}
-		err := data.Generate(data, builder)
+		err := data.Generate(builder)
+
 		require.Nil(t, err)
 		require.EqualValues(t, expected, builder.String())
-
 	})
-
 }

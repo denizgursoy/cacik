@@ -6,48 +6,83 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/denizgursoy/cacik/internal/app"
-	"github.com/denizgursoy/cacik/internal/executor"
+)
+
+const (
+	StepPrefix   = "@cacik"
+	SpaceAndTick = " `"
 )
 
 type GoSourceFileParser struct {
-}
-
-func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, s string) (
-	[]app.FunctionLocator, error) {
-	return nil, nil
 }
 
 func NewGoSourceFileParser() *GoSourceFileParser {
 	return &GoSourceFileParser{}
 }
 
-func GetComments(functionDirectory string) {
-	fileSet := token.NewFileSet()
-	dir, err := parser.ParseDir(fileSet, functionDirectory, nil, parser.ParseComments)
-	if err != nil {
-		return
+func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, parentDirectory string) (
+	*app.Output, error) {
+	directories := getAllSubDirectories(parentDirectory)
+	directories = append(directories, parentDirectory)
+
+	output := &app.Output{
+		ConfigFunction: nil,
+		StepFunctions:  make([]*app.StepFunctionLocator, 0),
 	}
 
-	for packageName, packageData := range dir {
-		for _, val := range packageData.Files {
-			for _, dec := range val.Decls {
+	allPackages := make(map[string]*ast.Package)
+	for _, dir := range directories {
+		packagesInTheDirectory, err := parser.ParseDir(token.NewFileSet(), dir, nil, parser.ParseComments)
+		if err != nil {
+			return nil, err
+		}
+		mergePackages(allPackages, packagesInTheDirectory)
+	}
+
+	for _, packageData := range allPackages {
+		for filePath, node := range packageData.Files {
+			for _, dec := range node.Decls {
 				decl, ok := dec.(*ast.FuncDecl)
 				if ok {
-					if IsConfigFunction(decl, val.Imports) {
-						println("found config function")
-						executor.ExcuteFunction(decl)
+					importPathOfFuncDecl, err := getImportPathOfFuncDecl(filePath)
+					if err != nil {
+						return nil, err
+					}
+
+					step, isStepFunction := IsStepFunction(decl)
+					if IsConfigFunction(decl, node.Imports) {
+						output.ConfigFunction = &app.FunctionLocator{
+							FullPackageName: importPathOfFuncDecl,
+							FunctionName:    decl.Name.Name,
+						}
+					} else if isStepFunction {
+						output.StepFunctions = append(output.StepFunctions, &app.StepFunctionLocator{
+							StepName: *step,
+							FunctionLocator: &app.FunctionLocator{
+								FullPackageName: importPathOfFuncDecl,
+								FunctionName:    decl.Name.Name,
+							},
+						})
 					}
 				}
 			}
 		}
-		fmt.Println(packageName, packageData)
+
 	}
+
+	return output, nil
 }
 
 func IsConfigFunction(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec) bool {
+	if fnDecl.Type.Results == nil {
+		return false
+	}
 	returnedTypes := fnDecl.Type.Results.List
 	if len(returnedTypes) != 1 {
 		return false
@@ -56,6 +91,32 @@ func IsConfigFunction(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec) bool {
 	e := returnedTypes[0].Type
 	path := analyzeExpr(e, imports)
 	return strings.HasSuffix(path, "Config")
+}
+
+func IsStepFunction(decl *ast.FuncDecl) (*string, bool) {
+	with := GetCommentLineStartingWith(StepPrefix, decl)
+	if with != nil {
+		return with, true
+	}
+	return nil, false
+}
+
+func GetCommentLineStartingWith(keyword string, fnDecl *ast.FuncDecl) *string {
+	if fnDecl.Doc != nil {
+		for _, comment := range fnDecl.Doc.List {
+			text := comment.Text
+			prefix := fmt.Sprintf("// %s", keyword)
+			if strings.HasPrefix(text, prefix) {
+				// include empty space and `
+				startIndex := len(prefix) + len(SpaceAndTick)
+				if len(text)-startIndex > 2 {
+					stepDefinition := text[startIndex : len(text)-1]
+					return &stepDefinition
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func analyzeExpr(expr ast.Expr, imports []*ast.ImportSpec) string {
@@ -90,5 +151,45 @@ func analyzeExpr(expr ast.Expr, imports []*ast.ImportSpec) string {
 		return analyzeExpr(expr.Type, imports)
 	default:
 		return "unknown"
+	}
+}
+
+func getImportPathOfFuncDecl(filename string) (string, error) {
+	// Run "go list" command to get module path.
+	cmd := exec.Command("go", "list")
+	cmd.Dir = filepath.Dir(filename)
+	modulePathBytes, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(modulePathBytes)), nil // FuncDecl not found in the file.
+}
+
+func getAllSubDirectories(dirPath string) []string {
+	var subdirectories []string
+
+	// Walk the directory.
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			fmt.Println(err)
+			return err
+		}
+		// Check if it's a directory (excluding the root directory).
+		if info.IsDir() && path != dirPath {
+			subdirectories = append(subdirectories, path)
+		}
+		return nil
+	})
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return subdirectories
+}
+
+func mergePackages(m1 map[string]*ast.Package, m2 map[string]*ast.Package) {
+	for k, v := range m2 {
+		m1[k] = v
 	}
 }

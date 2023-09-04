@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
+	"os"
+
 	"github.com/denizgursoy/cacik/internal/app"
-	"github.com/denizgursoy/cacik/internal/generator"
 	"github.com/denizgursoy/cacik/internal/parser"
 )
 
 func main() {
-	codeGenerator := generator.NewGoCodeGenerator()
-	codeGenerator.Name()
-	app.StartApplication(parser.NewGoSourceFileParser(), nil)
+	err := app.StartApplication(context.Background(), parser.NewGoSourceFileParser(), nil)
+	if err != nil {
+		os.Exit(1)
+	}
 }

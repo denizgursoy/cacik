@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -21,7 +22,7 @@ func TestStartApplication(t *testing.T) {
 			Return([]FunctionLocator{}, nil).
 			Times(1)
 
-		StartApplication(mockGoCodeParser, mockGherkinParser)
+		StartApplication(context.Background(), mockGoCodeParser, mockGherkinParser)
 	})
 
 	t.Run("should get directories from flags", func(t *testing.T) {
@@ -32,7 +33,7 @@ func TestStartApplication(t *testing.T) {
 		expectedPath := "/etc,/home"
 		os.Args = []string{"x", "--code", expectedPath}
 
-		for _, s := range strings.Split(expectedPath, Seperator) {
+		for _, s := range strings.Split(expectedPath, Separator) {
 			mockGoCodeParser.
 				EXPECT().
 				ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), s).
@@ -40,6 +41,6 @@ func TestStartApplication(t *testing.T) {
 				Times(1)
 		}
 
-		StartApplication(mockGoCodeParser, mockGherkinParser)
+		StartApplication(context.Background(), mockGoCodeParser, mockGherkinParser)
 	})
 }

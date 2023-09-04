@@ -8,9 +8,8 @@ import (
 
 type (
 	FunctionLocator struct {
-		PackageName string
-		Name        string
-		Import      string
+		FullPackageName string
+		FunctionName    string
 	}
 
 	StepFunctionLocator struct {
@@ -21,21 +20,20 @@ type (
 	Output struct {
 		ConfigFunction *FunctionLocator
 		StepFunctions  []*StepFunctionLocator
-		Imports        map[string]string
 	}
 )
 
-func (o *Output) Generate(output Output, writer io.Writer) error {
+func (o *Output) Generate(writer io.Writer) error {
 	mainFile := jen.NewFile("main")
-	mainFile.ImportNames(o.Imports)
+
 	functionBody := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
 
-	if output.ConfigFunction != nil {
-		functionBody.Id("SetConfig").Call(jen.Qual(output.ConfigFunction.PackageName, output.ConfigFunction.Name)).Id(".").Line()
+	if o.ConfigFunction != nil {
+		functionBody.Id("SetConfig").Call(jen.Qual(o.ConfigFunction.FullPackageName, o.ConfigFunction.FunctionName)).Id(".").Line()
 	}
 
-	for _, function := range output.StepFunctions {
-		functionBody.Id("RegisterStep").Call(jen.Id(function.StepName), jen.Qual(function.Import, function.Name)).Id(".").Line()
+	for _, function := range o.StepFunctions {
+		functionBody.Id("RegisterStep").Call(jen.Lit(function.StepName), jen.Qual(function.FullPackageName, function.FunctionName)).Id(".").Line()
 	}
 	functionBody.Id("Run").Call().Line().Line()
 	functionBody.If(jen.Id("err").Op("!=").Nil()).Block(

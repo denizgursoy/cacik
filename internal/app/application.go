@@ -3,41 +3,43 @@ package app
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"strings"
 )
 
 const (
-	Seperator = ","
+	Separator = ","
 )
 
-func StartApplication(codeParser GoCodeParser, gherkinParser GherkinParser) {
+func StartApplication(ctx context.Context, codeParser GoCodeParser, gherkinParser GherkinParser) error {
 	funcSources := make([]string, 0)
-
-	ctx := context.Background()
 
 	codeFlag := flag.String("code", "", "directories to search for functions seperated by comma")
 	flag.Parse()
 
 	if len(strings.TrimSpace(*codeFlag)) == 0 {
-		dir, err := os.Getwd()
+		directory, err := os.Getwd()
 		if err != nil {
-			log.Fatal(err.Error())
+			return err
 		}
-		funcSources = append(funcSources, dir)
+		funcSources = append(funcSources, directory)
 	} else {
-		funcSources = append(funcSources, strings.Split(*codeFlag, Seperator)...)
+		funcSources = append(funcSources, strings.Split(*codeFlag, Separator)...)
 	}
 
 	for _, source := range funcSources {
 		recursively, err := codeParser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx, source)
 		if err != nil {
-			log.Fatal(err)
-			return
+			log.Println(err.Error())
+			return err
 		}
-		fmt.Println(recursively)
+		create, err := os.Create("main.go")
+		if err != nil {
+			return err
+		}
+		recursively.Generate(create)
 	}
 
+	return nil
 }
