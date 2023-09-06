@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	expectedOuput = &app.Output{
+	expectedOutput = &app.Output{
 		ConfigFunction: &app.FunctionLocator{
 			FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata",
 			FunctionName:    "Method1",
@@ -44,6 +44,6 @@ func TestGetComments(t *testing.T) {
 		recursively, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
 
 		require.Nil(t, err)
-		require.Equal(t, expectedOuput, recursively)
+		require.Equal(t, expectedOutput, recursively)
 	})
 }
