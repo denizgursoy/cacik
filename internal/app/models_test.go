@@ -44,7 +44,7 @@ func main() {
 		SetConfig(a.ConfigFunction).
 		RegisterStep("^step 1$", Step1Function).
 		RegisterStep("^step 2$", Step2Function).
-		Run()
+		RunWithTags()
 
 	if err != nil {
 		log.Fatal(err)

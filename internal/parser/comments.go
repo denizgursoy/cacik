@@ -155,7 +155,7 @@ func analyzeExpr(expr ast.Expr, imports []*ast.ImportSpec) string {
 }
 
 func getImportPathOfFuncDecl(filename string) (string, error) {
-	// Run "go list" command to get module path.
+	// RunWithTags "go list" command to get module path.
 	cmd := exec.Command("go", "list")
 	cmd.Dir = filepath.Dir(filename)
 	modulePathBytes, err := cmd.Output()
