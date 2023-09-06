@@ -1,4 +1,4 @@
-package parser
+package comment_parser
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/denizgursoy/cacik/internal/app"
+	"github.com/denizgursoy/cacik/internal/generator"
 )
 
 const (
@@ -27,13 +27,13 @@ func NewGoSourceFileParser() *GoSourceFileParser {
 }
 
 func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, parentDirectory string) (
-	*app.Output, error) {
+	*generator.Output, error) {
 	directories := getAllSubDirectories(parentDirectory)
 	directories = append(directories, parentDirectory)
 
-	output := &app.Output{
+	output := &generator.Output{
 		ConfigFunction: nil,
-		StepFunctions:  make([]*app.StepFunctionLocator, 0),
+		StepFunctions:  make([]*generator.StepFunctionLocator, 0),
 	}
 
 	allPackages := make(map[string]*ast.Package)
@@ -57,14 +57,14 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 
 					step, isStepFunction := IsStepFunction(decl)
 					if IsConfigFunction(decl, node.Imports) {
-						output.ConfigFunction = &app.FunctionLocator{
+						output.ConfigFunction = &generator.FunctionLocator{
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
 						}
 					} else if isStepFunction {
-						output.StepFunctions = append(output.StepFunctions, &app.StepFunctionLocator{
+						output.StepFunctions = append(output.StepFunctions, &generator.StepFunctionLocator{
 							StepName: *step,
-							FunctionLocator: &app.FunctionLocator{
+							FunctionLocator: &generator.FunctionLocator{
 								FullPackageName: importPathOfFuncDecl,
 								FunctionName:    decl.Name.Name,
 							},

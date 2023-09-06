@@ -1,4 +1,4 @@
-package app
+package generator
 
 import (
 	"context"
@@ -12,7 +12,7 @@ const (
 	Separator = ","
 )
 
-func StartApplication(ctx context.Context, codeParser GoCodeParser, gherkinParser GherkinParser) error {
+func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 	funcSources := make([]string, 0)
 
 	codeFlag := flag.String("code", "", "directories to search for functions seperated by comma")

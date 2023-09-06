@@ -1,4 +1,4 @@
-package app
+package generator
 
 import (
 	"context"
@@ -6,13 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
 func TestStartApplication(t *testing.T) {
 	t.Run("should call code parser with the working directory", func(t *testing.T) {
 		controller := gomock.NewController(t)
-		mockGherkinParser := NewMockGherkinParser(controller)
 		mockGoCodeParser := NewMockGoCodeParser(controller)
 
 		dir, _ := os.Getwd()
@@ -22,12 +22,12 @@ func TestStartApplication(t *testing.T) {
 			Return([]FunctionLocator{}, nil).
 			Times(1)
 
-		StartApplication(context.Background(), mockGoCodeParser, mockGherkinParser)
+		err := StartGenerator(context.Background(), mockGoCodeParser)
+		require.Nil(t, err)
 	})
 
 	t.Run("should get directories from flags", func(t *testing.T) {
 		controller := gomock.NewController(t)
-		mockGherkinParser := NewMockGherkinParser(controller)
 		mockGoCodeParser := NewMockGoCodeParser(controller)
 
 		expectedPath := "/etc,/home"
@@ -41,6 +41,7 @@ func TestStartApplication(t *testing.T) {
 				Times(1)
 		}
 
-		StartApplication(context.Background(), mockGoCodeParser, mockGherkinParser)
+		err := StartGenerator(context.Background(), mockGoCodeParser)
+		require.Nil(t, err)
 	})
 }

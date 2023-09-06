@@ -1,4 +1,4 @@
-package parser
+package comment_parser
 
 import (
 	"context"
@@ -6,27 +6,27 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/denizgursoy/cacik/internal/app"
+	"github.com/denizgursoy/cacik/internal/generator"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	expectedOutput = &app.Output{
-		ConfigFunction: &app.FunctionLocator{
+	expectedOutput = &generator.Output{
+		ConfigFunction: &generator.FunctionLocator{
 			FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata",
 			FunctionName:    "Method1",
 		},
-		StepFunctions: []*app.StepFunctionLocator{
+		StepFunctions: []*generator.StepFunctionLocator{
 			{
 				StepName: "^step 1$",
-				FunctionLocator: &app.FunctionLocator{
+				FunctionLocator: &generator.FunctionLocator{
 					FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata/step-one",
 					FunctionName:    "Step1",
 				},
 			},
 			{
 				StepName: "^step 2$",
-				FunctionLocator: &app.FunctionLocator{
+				FunctionLocator: &generator.FunctionLocator{
 					FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata/step-two",
 					FunctionName:    "Step2",
 				},

@@ -1,5 +1,5 @@
-//go:generate mockgen -source=interfaces.go -destination=interface_mock.go -package=app
-package app
+//go:generate mockgen -source=interfaces.go -destination=interface_mock.go -package=generator
+package generator
 
 import "context"
 
