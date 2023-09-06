@@ -12,7 +12,7 @@ func NewCucumberRunner() *CucumberRunner {
 	return &CucumberRunner{}
 }
 
-func (c *CucumberRunner) SetConfig(configFunction func() *models.Config) *CucumberRunner {
+func (c *CucumberRunner) SetConfigFunc(configFunction func() *models.Config) *CucumberRunner {
 	if configFunction != nil {
 		c.config = configFunction()
 	}
@@ -24,6 +24,6 @@ func (c *CucumberRunner) RegisterStep(definition string, function any) *Cucumber
 	return c
 }
 
-func (c *CucumberRunner) Run() error {
+func (c *CucumberRunner) Run(tags ...string) error {
 	return nil
 }

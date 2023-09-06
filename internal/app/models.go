@@ -29,7 +29,7 @@ func (o *Output) Generate(writer io.Writer) error {
 	functionBody := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
 
 	if o.ConfigFunction != nil {
-		functionBody.Id("SetConfig").Call(jen.Qual(o.ConfigFunction.FullPackageName, o.ConfigFunction.FunctionName)).Id(".").Line()
+		functionBody.Id("SetConfigFunc").Call(jen.Qual(o.ConfigFunction.FullPackageName, o.ConfigFunction.FunctionName)).Id(".").Line()
 	}
 
 	for _, function := range o.StepFunctions {
