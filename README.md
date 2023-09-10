@@ -29,7 +29,7 @@ import (
 )
 
 // IGetApples
-// @cacik `I have \d apples`
+// @cacik `^I have \d apples$`
 func IGetApples(ctx context.Context, appleCount int) (context.Context, error) {
 	fmt.Printf("I have %d apples", appleCount)
 
@@ -56,6 +56,28 @@ Cacik will create main file
 ├── apple.feature
 ├── main.go
 └── steps.go
+```
+
+main.go
+
+```go
+package main
+
+import (
+	runner "github.com/denizgursoy/cacik/pkg/runner"
+	"log"
+)
+
+func main() {
+	err := runner.NewCucumberRunner().
+		RegisterStep("^I have \\d apples$", IGetApples).
+		RunWithTags()
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
 ```
 
 ## Execute main.go
