@@ -1,5 +1,8 @@
 # cacik
 
+Cacik executes cucumber scenario with Go functions. Cacik parses go function comments stating with `@cacik` to find step
+definitions.
+
 ## Create directories
 
 Create your feature file and steps in a directory.
@@ -85,5 +88,7 @@ func main() {
 To execute scenarios in the feature file, execute:
 
 ```shell
-go run main.go
+go run .
 ```
+
+It will print `I have 3 apples`
