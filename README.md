@@ -3,7 +3,7 @@
 Cacik executes cucumber scenario with Go functions. Cacik parses go function comments stating with `@cacik` to find step
 definitions.
 
-## Create directories
+## Create files
 
 Create your feature file and steps in a directory.
 
