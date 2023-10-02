@@ -6,9 +6,11 @@ import (
 	"os"
 	"slices"
 
+	gherkin "github.com/cucumber/gherkin/go/v26"
 	messages "github.com/cucumber/messages/go/v21"
 	"github.com/denizgursoy/cacik/pkg/gherkin_parser"
 	"github.com/denizgursoy/cacik/pkg/models"
+	"github.com/gofrs/uuid"
 )
 
 type (
@@ -50,19 +52,6 @@ func (c *CucumberRunner) RegisterStep(definition string, function any) *Cucumber
 	return c
 }
 
-type (
-	Executed struct {
-		Tags        []*messages.Tag
-		Backgrounds []*messages.Background
-		Steps       StepWithExamples
-	}
-
-	StepWithExamples struct {
-		Steps    []*messages.Step
-		Examples []*messages.Examples
-	}
-)
-
 func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 	if len(c.featureDirectories) == 0 {
 		c.featureDirectories = append(c.featureDirectories, ".")
@@ -73,7 +62,7 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 		return err
 	}
 
-	execs := make([]*Executed, 0)
+	allPickles := make([]*messages.Pickle, 0)
 	for _, file := range featureFiles {
 		readFile, err := os.ReadFile(file)
 		if err != nil {
@@ -84,34 +73,16 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 			return fmt.Errorf("gherkin parse error in file %s, error=%w", file, err)
 		}
 
-		featureBackground := getBackground(document.Feature)
-		featureTag := document.Feature.Tags
-
-		for _, child := range document.Feature.Children {
-			if child.Scenario != nil {
-				ex := NewExecuted()
-				ex.addTags(featureTag, child.Scenario.Tags)
-				ex.addBackground(featureBackground)
-				ex.addStepWithExample(child.Scenario.Steps, child.Scenario.Examples)
-				execs = append(execs, ex)
-			} else if child.Rule != nil {
-				ruleTags := child.Rule.Tags
-				ruleBackGround := getRuleBackground(child.Rule)
-				for _, ruleChild := range child.Rule.Children {
-					if ruleChild.Scenario != nil {
-						ex := NewExecuted()
-						ex.addTags(featureTag, ruleTags, ruleChild.Scenario.Tags)
-						ex.addBackground(featureBackground, ruleBackGround)
-						ex.addStepWithExample(ruleChild.Scenario.Steps, ruleChild.Scenario.Examples)
-						execs = append(execs, ex)
-					}
-
-				}
-			}
-
-		}
+		pickles := gherkin.Pickles(*document, document.Uri, name)
+		allPickles = append(allPickles, pickles...)
 	}
+
+	fmt.Println(allPickles)
 	return nil
+}
+func name() string {
+	v4, _ := uuid.NewV4()
+	return v4.String()
 }
 
 func getBackground(feature *messages.Feature) *messages.Background {
@@ -142,29 +113,4 @@ func includeTags(docTags []*messages.Tag, userTags []string) bool {
 		}
 	}
 	return false
-}
-
-func NewExecuted() *Executed {
-	return &Executed{
-		Tags:        make([]*messages.Tag, 0),
-		Backgrounds: make([]*messages.Background, 0),
-	}
-}
-
-func (e *Executed) addTags(tags ...[]*messages.Tag) {
-	for _, tag := range tags {
-		e.Tags = append(e.Tags, tag...)
-	}
-}
-
-func (e *Executed) addBackground(backgrounds ...*messages.Background) {
-	for _, background := range backgrounds {
-		e.Backgrounds = append(e.Backgrounds, background)
-	}
-
-}
-
-func (e *Executed) addStepWithExample(steps []*messages.Step, examples []*messages.Examples) {
-	e.Steps.Steps = steps
-	e.Steps.Examples = examples
 }

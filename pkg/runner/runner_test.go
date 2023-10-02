@@ -2,7 +2,9 @@ package runner
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"regexp"
 	"testing"
 
 	messages "github.com/cucumber/messages/go/v21"
@@ -58,4 +60,10 @@ func TestCucumberRunner_RunWithTags(t *testing.T) {
 
 		require.Nil(t, err)
 	})
+}
+
+func Test_Name(t *testing.T) {
+	compile := regexp.MustCompile("there are \\d apples")
+	submatch := compile.FindStringSubmatch("there are 5 apples")
+	fmt.Println(submatch)
 }
