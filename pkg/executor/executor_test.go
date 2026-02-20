@@ -317,6 +317,158 @@ func TestStepExecutor_FeatureToggle(t *testing.T) {
 	})
 }
 
+// Custom type for testing
+type Color string
+
+func TestStepExecutor_CustomStringType(t *testing.T) {
+	t.Run("converts string to custom type", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register the custom type with allowed values
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":   "red",
+			"blue":  "blue",
+			"green": "green",
+		})
+
+		var capturedColor Color
+
+		err := exec.RegisterStep("^I select (red|blue|green)$", func(ctx context.Context, c Color) (context.Context, error) {
+			capturedColor = c
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("I select red")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("red"), capturedColor)
+	})
+
+	t.Run("case-insensitive matching", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register with lowercase keys for case-insensitive matching
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":  "red",
+			"blue": "blue",
+		})
+
+		var capturedColor Color
+
+		err := exec.RegisterStep("^I select (red|blue|RED|BLUE)$", func(ctx context.Context, c Color) (context.Context, error) {
+			capturedColor = c
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("I select RED")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("red"), capturedColor) // Should be lowercase
+	})
+
+	t.Run("rejects invalid value", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":  "red",
+			"blue": "blue",
+		})
+
+		err := exec.RegisterStep("^I select (\\w+)$", func(ctx context.Context, c Color) (context.Context, error) {
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("I select purple")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid Color")
+		require.Contains(t, err.Error(), "purple")
+	})
+}
+
+// Custom type for testing int-based enums
+type Priority int
+
+func TestStepExecutor_CustomIntType(t *testing.T) {
+	t.Run("converts string to custom int type by name", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register with both names and values
+		exec.RegisterCustomType("Priority", "int", map[string]string{
+			"low":    "1",
+			"medium": "2",
+			"high":   "3",
+			"1":      "1",
+			"2":      "2",
+			"3":      "3",
+		})
+
+		var capturedPriority Priority
+
+		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx context.Context, p Priority) (context.Context, error) {
+			capturedPriority = p
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		// Test with name
+		doc := createDocument("priority is high")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Priority(3), capturedPriority)
+	})
+
+	t.Run("converts string to custom int type by value", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		exec.RegisterCustomType("Priority", "int", map[string]string{
+			"low":    "1",
+			"medium": "2",
+			"high":   "3",
+			"1":      "1",
+			"2":      "2",
+			"3":      "3",
+		})
+
+		var capturedPriority Priority
+
+		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx context.Context, p Priority) (context.Context, error) {
+			capturedPriority = p
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		// Test with numeric value
+		doc := createDocument("priority is 2")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Priority(2), capturedPriority)
+	})
+}
+
+func TestStepExecutor_CustomTypeWithoutRegistration(t *testing.T) {
+	t.Run("custom type without registration still works", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Don't register the custom type - it should still convert
+		var capturedColor Color
+
+		err := exec.RegisterStep("^I select (\\w+)$", func(ctx context.Context, c Color) (context.Context, error) {
+			capturedColor = c
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("I select anything")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("anything"), capturedColor)
+	})
+}
+
 // Helper functions to create test documents
 
 func createDocument(stepText string) *messages.GherkinDocument {

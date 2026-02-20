@@ -56,6 +56,15 @@ func (c *CucumberRunner) RegisterStep(definition string, function any) *Cucumber
 	return c
 }
 
+// RegisterCustomType registers a custom type with its allowed values for validation
+// name: the type name (e.g., "Color")
+// underlying: the underlying primitive type (e.g., "string")
+// values: map of lowercase name/value -> actual value for case-insensitive matching
+func (c *CucumberRunner) RegisterCustomType(name, underlying string, values map[string]string) *CucumberRunner {
+	c.executor.RegisterCustomType(name, underlying, values)
+	return c
+}
+
 func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 	if len(c.featureDirectories) == 0 {
 		c.featureDirectories = append(c.featureDirectories, ".")

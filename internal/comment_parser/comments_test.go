@@ -63,5 +63,194 @@ func TestGetComments(t *testing.T) {
 		// Bool step definitions
 		require.Equal(t, "^it is (true|false|yes|no|on|off|enabled|disabled)$", stepMap["ItIs"])
 		require.Equal(t, "^the feature is (enabled|disabled)$", stepMap["FeatureToggle"])
+
+		// Custom type step definitions - Color (string-based)
+		// {color} should be transformed to (blue|green|red) - sorted alphabetically
+		require.Contains(t, stepMap["SelectColor"], "blue")
+		require.Contains(t, stepMap["SelectColor"], "green")
+		require.Contains(t, stepMap["SelectColor"], "red")
+
+		// Custom type step definitions - Priority (int-based)
+		// {priority} should include both names and values: high, low, medium, 1, 2, 3
+		require.Contains(t, stepMap["SetPriority"], "low")
+		require.Contains(t, stepMap["SetPriority"], "medium")
+		require.Contains(t, stepMap["SetPriority"], "high")
+		require.Contains(t, stepMap["SetPriority"], "1")
+		require.Contains(t, stepMap["SetPriority"], "2")
+		require.Contains(t, stepMap["SetPriority"], "3")
+
+		// Built-in type step definitions
+		require.Equal(t, `^I have (-?\d+) apples$`, stepMap["HaveApples"])
+		require.Equal(t, `^the price is (-?\d*\.?\d+)$`, stepMap["PriceIs"])
+		require.Equal(t, `^my name is (\w+)$`, stepMap["NameIs"])
+		require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
+		require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+	})
+}
+
+func TestCustomTypeParsing(t *testing.T) {
+	t.Run("parses Color custom type", func(t *testing.T) {
+		dir, err := os.Getwd()
+		require.Nil(t, err)
+
+		parser := NewGoSourceFileParser()
+		output, err := parser.
+			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
+
+		require.Nil(t, err)
+
+		// Check Color custom type
+		colorType, ok := output.CustomTypes["color"]
+		require.True(t, ok, "Color type should be found")
+		require.Equal(t, "Color", colorType.Name)
+		require.Equal(t, "string", colorType.Underlying)
+		require.Equal(t, "red", colorType.Values["Red"])
+		require.Equal(t, "blue", colorType.Values["Blue"])
+		require.Equal(t, "green", colorType.Values["Green"])
+	})
+
+	t.Run("parses Priority custom type", func(t *testing.T) {
+		dir, err := os.Getwd()
+		require.Nil(t, err)
+
+		parser := NewGoSourceFileParser()
+		output, err := parser.
+			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
+
+		require.Nil(t, err)
+
+		// Check Priority custom type
+		priorityType, ok := output.CustomTypes["priority"]
+		require.True(t, ok, "Priority type should be found")
+		require.Equal(t, "Priority", priorityType.Name)
+		require.Equal(t, "int", priorityType.Underlying)
+		require.Equal(t, "1", priorityType.Values["Low"])
+		require.Equal(t, "2", priorityType.Values["Medium"])
+		require.Equal(t, "3", priorityType.Values["High"])
+	})
+}
+
+func TestTransformStepPattern(t *testing.T) {
+	t.Run("transforms {color} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red", "Blue": "blue"},
+			},
+		}
+
+		result, err := transformStepPattern("^I select {color}$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, "blue")
+		require.Contains(t, result, "red")
+		require.Contains(t, result, "(")
+		require.Contains(t, result, ")")
+	})
+
+	t.Run("returns error for unknown type", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		_, err := transformStepPattern("^I select {unknown}$", customTypes)
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "unknown parameter type")
+	})
+
+	t.Run("returns error for type with no constants", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"empty": {
+				Name:       "Empty",
+				Underlying: "string",
+				Values:     map[string]string{},
+			},
+		}
+
+		_, err := transformStepPattern("^I select {empty}$", customTypes)
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "no defined constants")
+	})
+
+	t.Run("handles multiple custom types in pattern", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red"},
+			},
+			"size": {
+				Name:       "Size",
+				Underlying: "string",
+				Values:     map[string]string{"Large": "large"},
+			},
+		}
+
+		result, err := transformStepPattern("^I want {color} and {size}$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, "red")
+		require.Contains(t, result, "large")
+	})
+
+	// Built-in parameter type tests
+	t.Run("transforms {int} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^I have {int} apples$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^I have (-?\d+) apples$`, result)
+	})
+
+	t.Run("transforms {float} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^the price is {float}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^the price is (-?\d*\.?\d+)$`, result)
+	})
+
+	t.Run("transforms {word} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^my name is {word}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^my name is (\w+)$`, result)
+	})
+
+	t.Run("transforms {string} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^I say {string}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^I say "([^"]*)"$`, result)
+	})
+
+	t.Run("transforms {} (empty) to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^I have {} items$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^I have (.*) items$`, result)
+	})
+
+	t.Run("transforms {any} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^I see {any}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^I see (.*)$`, result)
+	})
+
+	t.Run("handles mixed built-in and custom types", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red"},
+			},
+		}
+
+		result, err := transformStepPattern("^I have {int} {color} items$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, `(-?\d+)`)
+		require.Contains(t, result, "red")
 	})
 }

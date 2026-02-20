@@ -17,19 +17,50 @@ type StepDefinition struct {
 	Function any
 }
 
+// CustomTypeInfo holds runtime info for custom type validation
+type CustomTypeInfo struct {
+	Name          string            // Type name, e.g., "Color"
+	Underlying    string            // Underlying primitive type: "string", "int", etc.
+	AllowedValues map[string]string // lowercase name/value -> actual value
+}
+
+// AllowedValuesList returns a list of allowed values for error messages
+func (c *CustomTypeInfo) AllowedValuesList() []string {
+	seen := make(map[string]bool)
+	var values []string
+	for _, v := range c.AllowedValues {
+		if !seen[v] {
+			values = append(values, v)
+			seen[v] = true
+		}
+	}
+	return values
+}
+
 // StepExecutor handles matching and executing step definitions
 type StepExecutor struct {
-	steps      []StepDefinition
-	patternSet map[string]bool // Track registered patterns for duplicate detection
-	context    context.Context
+	steps       []StepDefinition
+	patternSet  map[string]bool            // Track registered patterns for duplicate detection
+	customTypes map[string]*CustomTypeInfo // type name -> custom type info
+	context     context.Context
 }
 
 // NewStepExecutor creates a new StepExecutor
 func NewStepExecutor() *StepExecutor {
 	return &StepExecutor{
-		steps:      make([]StepDefinition, 0),
-		patternSet: make(map[string]bool),
-		context:    context.Background(),
+		steps:       make([]StepDefinition, 0),
+		patternSet:  make(map[string]bool),
+		customTypes: make(map[string]*CustomTypeInfo),
+		context:     context.Background(),
+	}
+}
+
+// RegisterCustomType registers a custom type with its allowed values
+func (e *StepExecutor) RegisterCustomType(name, underlying string, values map[string]string) {
+	e.customTypes[name] = &CustomTypeInfo{
+		Name:          name,
+		Underlying:    underlying,
+		AllowedValues: values,
 	}
 }
 
@@ -195,7 +226,7 @@ func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string)
 		arg := capturedArgs[capturedIndex]
 		capturedIndex++
 
-		converted, err := convertArg(arg, paramType)
+		converted, err := e.convertArg(arg, paramType)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert argument %q to %s: %w", arg, paramType, err)
 		}
@@ -235,7 +266,84 @@ func (e *StepExecutor) processReturnValues(fnType reflect.Type, results []reflec
 }
 
 // convertArg converts a string argument to the target type
-func convertArg(arg string, targetType reflect.Type) (reflect.Value, error) {
+func (e *StepExecutor) convertArg(arg string, targetType reflect.Type) (reflect.Value, error) {
+	typeName := targetType.Name()
+	kindName := targetType.Kind().String()
+
+	// Check if this is a custom type (named type that differs from its kind)
+	if typeName != "" && typeName != kindName {
+		return e.convertCustomType(arg, targetType, typeName)
+	}
+
+	// Handle primitive types
+	return convertPrimitive(arg, targetType)
+}
+
+// convertCustomType handles conversion of custom types like `type Color string`
+func (e *StepExecutor) convertCustomType(arg string, targetType reflect.Type, typeName string) (reflect.Value, error) {
+	// Look up custom type info for validation
+	info, hasInfo := e.customTypes[typeName]
+
+	// Resolve the actual value (handles case-insensitive matching)
+	actualValue := arg
+	if hasInfo {
+		resolved, ok := info.AllowedValues[strings.ToLower(arg)]
+		if !ok {
+			return reflect.Value{}, fmt.Errorf("invalid %s: %q (allowed: %v)",
+				typeName, arg, info.AllowedValuesList())
+		}
+		actualValue = resolved
+	}
+
+	// Create a value of the custom type
+	return convertToCustomType(actualValue, targetType)
+}
+
+// convertToCustomType creates a value of a custom type from a string
+func convertToCustomType(arg string, targetType reflect.Type) (reflect.Value, error) {
+	val := reflect.New(targetType).Elem()
+
+	switch targetType.Kind() {
+	case reflect.String:
+		val.SetString(arg)
+
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		i, err := strconv.ParseInt(arg, 10, 64)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		val.SetInt(i)
+
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		u, err := strconv.ParseUint(arg, 10, 64)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		val.SetUint(u)
+
+	case reflect.Float32, reflect.Float64:
+		f, err := strconv.ParseFloat(arg, 64)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		val.SetFloat(f)
+
+	case reflect.Bool:
+		b, err := parseBool(arg)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		val.SetBool(b)
+
+	default:
+		return reflect.Value{}, fmt.Errorf("unsupported underlying type: %s", targetType.Kind())
+	}
+
+	return val, nil
+}
+
+// convertPrimitive converts a string to a primitive type
+func convertPrimitive(arg string, targetType reflect.Type) (reflect.Value, error) {
 	switch targetType.Kind() {
 	case reflect.String:
 		return reflect.ValueOf(arg), nil
