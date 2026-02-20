@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 
 	messages "github.com/cucumber/messages/go/v21"
 )
@@ -324,7 +325,7 @@ func convertArg(arg string, targetType reflect.Type) (reflect.Value, error) {
 		return reflect.ValueOf(v), nil
 
 	case reflect.Bool:
-		v, err := strconv.ParseBool(arg)
+		v, err := parseBool(arg)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -332,6 +333,22 @@ func convertArg(arg string, targetType reflect.Type) (reflect.Value, error) {
 
 	default:
 		return reflect.Value{}, fmt.Errorf("unsupported parameter type: %s", targetType.Kind())
+	}
+}
+
+// parseBool converts a string to a boolean value.
+// It supports human-readable values in addition to standard bool strings.
+// Truthy values: true, yes, on, enabled, 1
+// Falsy values: false, no, off, disabled, 0
+// All comparisons are case-insensitive.
+func parseBool(s string) (bool, error) {
+	switch strings.ToLower(s) {
+	case "true", "yes", "on", "enabled", "1":
+		return true, nil
+	case "false", "no", "off", "disabled", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("cannot parse %q as bool", s)
 	}
 }
 

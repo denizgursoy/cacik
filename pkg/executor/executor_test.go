@@ -213,6 +213,110 @@ func TestStepExecutor_Execute_Background(t *testing.T) {
 	})
 }
 
+func TestStepExecutor_BoolArgument(t *testing.T) {
+	testCases := []struct {
+		name     string
+		stepText string
+		expected bool
+	}{
+		// Standard boolean values
+		{"true", "it is true", true},
+		{"false", "it is false", false},
+		{"TRUE (uppercase)", "it is TRUE", true},
+		{"FALSE (uppercase)", "it is FALSE", false},
+		{"True (mixed case)", "it is True", true},
+		{"False (mixed case)", "it is False", false},
+
+		// Yes/No
+		{"yes", "it is yes", true},
+		{"no", "it is no", false},
+		{"YES (uppercase)", "it is YES", true},
+		{"NO (uppercase)", "it is NO", false},
+
+		// On/Off
+		{"on", "it is on", true},
+		{"off", "it is off", false},
+		{"ON (uppercase)", "it is ON", true},
+		{"OFF (uppercase)", "it is OFF", false},
+
+		// Enabled/Disabled
+		{"enabled", "it is enabled", true},
+		{"disabled", "it is disabled", false},
+		{"ENABLED (uppercase)", "it is ENABLED", true},
+		{"DISABLED (uppercase)", "it is DISABLED", false},
+
+		// Numeric
+		{"1", "it is 1", true},
+		{"0", "it is 0", false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := NewStepExecutor()
+			var capturedValue bool
+
+			err := exec.RegisterStep("^it is (.+)$", func(ctx context.Context, value bool) (context.Context, error) {
+				capturedValue = value
+				return ctx, nil
+			})
+			require.NoError(t, err)
+
+			doc := createDocument(tc.stepText)
+			err = exec.Execute(doc)
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, capturedValue)
+		})
+	}
+
+	t.Run("returns error for invalid bool value", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		err := exec.RegisterStep("^it is (.+)$", func(ctx context.Context, value bool) (context.Context, error) {
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("it is maybe")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot parse")
+	})
+}
+
+func TestStepExecutor_FeatureToggle(t *testing.T) {
+	t.Run("feature is enabled", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var featureEnabled bool
+
+		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx context.Context, enabled bool) (context.Context, error) {
+			featureEnabled = enabled
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("the feature is enabled")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.True(t, featureEnabled)
+	})
+
+	t.Run("feature is disabled", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var featureEnabled bool
+
+		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx context.Context, enabled bool) (context.Context, error) {
+			featureEnabled = enabled
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("the feature is disabled")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.False(t, featureEnabled)
+	})
+}
+
 // Helper functions to create test documents
 
 func createDocument(stepText string) *messages.GherkinDocument {

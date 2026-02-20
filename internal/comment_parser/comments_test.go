@@ -59,5 +59,9 @@ func TestGetComments(t *testing.T) {
 		require.Equal(t, "^step 1$", stepMap["Step1"])
 		require.Equal(t, "^step 2$", stepMap["Step2"])
 		require.Equal(t, "^I have (\\d+) apples$", stepMap["IGetApples"])
+
+		// Bool step definitions
+		require.Equal(t, "^it is (true|false|yes|no|on|off|enabled|disabled)$", stepMap["ItIs"])
+		require.Equal(t, "^the feature is (enabled|disabled)$", stepMap["FeatureToggle"])
 	})
 }

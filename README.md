@@ -51,8 +51,45 @@ func IHaveApples(ctx context.Context, appleCount int) (context.Context, error) {
 - `int`, `int8`, `int16`, `int32`, `int64` - integer values
 - `uint`, `uint8`, `uint16`, `uint32`, `uint64` - unsigned integers
 - `float32`, `float64` - floating point values
-- `bool` - boolean values (`true`, `false`, `1`, `0`)
+- `bool` - boolean values (see below)
 - `context.Context` - automatically passed (should be first parameter)
+
+### Boolean Values
+
+Boolean parameters support human-readable values (case-insensitive):
+
+| Truthy | Falsy |
+|--------|-------|
+| `true` | `false` |
+| `yes` | `no` |
+| `on` | `off` |
+| `enabled` | `disabled` |
+| `1` | `0` |
+
+Example:
+
+```go
+// FeatureToggle handles feature state
+// @cacik `^the feature is (enabled|disabled)$`
+func FeatureToggle(ctx context.Context, enabled bool) (context.Context, error) {
+    if enabled {
+        fmt.Println("Feature is ON")
+    } else {
+        fmt.Println("Feature is OFF")
+    }
+    return ctx, nil
+}
+```
+
+```gherkin
+Feature: Feature toggles
+
+  Scenario: Enable feature
+    Given the feature is enabled
+
+  Scenario: Disable feature
+    Given the feature is disabled
+```
 
 ### Function Signature
 
