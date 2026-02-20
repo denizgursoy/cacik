@@ -6,25 +6,30 @@ import (
 	"os"
 	"slices"
 
-	gherkin "github.com/cucumber/gherkin/go/v26"
 	messages "github.com/cucumber/messages/go/v21"
+	"github.com/denizgursoy/cacik/pkg/executor"
 	"github.com/denizgursoy/cacik/pkg/gherkin_parser"
 	"github.com/denizgursoy/cacik/pkg/models"
-	"github.com/gofrs/uuid"
 )
 
 type (
 	CucumberRunner struct {
 		config             *models.Config
 		featureDirectories []string
-		steps              map[string]any
-		executor           Executor
+		executor           *executor.StepExecutor
 	}
 )
 
-func NewCucumberRunner(exec Executor) *CucumberRunner {
+// NewCucumberRunner creates a new runner with an internal step executor
+func NewCucumberRunner() *CucumberRunner {
 	return &CucumberRunner{
-		steps:    make(map[string]any),
+		executor: executor.NewStepExecutor(),
+	}
+}
+
+// NewCucumberRunnerWithExecutor creates a runner with a custom executor (for testing)
+func NewCucumberRunnerWithExecutor(exec *executor.StepExecutor) *CucumberRunner {
+	return &CucumberRunner{
 		executor: exec,
 	}
 }
@@ -43,12 +48,11 @@ func (c *CucumberRunner) WithFeaturesDirectories(directories ...string) *Cucumbe
 	return c
 }
 
+// RegisterStep registers a step definition with the executor
 func (c *CucumberRunner) RegisterStep(definition string, function any) *CucumberRunner {
-	if _, ok := c.steps[definition]; ok {
-		panic(definition)
+	if err := c.executor.RegisterStep(definition, function); err != nil {
+		panic(fmt.Sprintf("failed to register step %q: %v", definition, err))
 	}
-	c.steps[definition] = function
-
 	return c
 }
 
@@ -62,7 +66,6 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 		return err
 	}
 
-	allPickles := make([]*messages.Pickle, 0)
 	for _, file := range featureFiles {
 		readFile, err := os.ReadFile(file)
 		if err != nil {
@@ -73,16 +76,20 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 			return fmt.Errorf("gherkin parse error in file %s, error=%w", file, err)
 		}
 
-		pickles := gherkin.Pickles(*document, document.Uri, name)
-		allPickles = append(allPickles, pickles...)
+		// Skip documents that don't match tags (if tags specified)
+		if len(userTags) > 0 && document.Feature != nil {
+			if !includeTags(document.Feature.Tags, userTags) {
+				continue
+			}
+		}
+
+		// Execute the document
+		if err := c.executor.Execute(document); err != nil {
+			return fmt.Errorf("execution failed for %s: %w", file, err)
+		}
 	}
 
-	fmt.Println(allPickles)
 	return nil
-}
-func name() string {
-	v4, _ := uuid.NewV4()
-	return v4.String()
 }
 
 func getBackground(feature *messages.Feature) *messages.Background {

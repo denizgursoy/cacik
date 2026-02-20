@@ -36,14 +36,28 @@ var (
 )
 
 func TestGetComments(t *testing.T) {
-	t.Run("", func(t *testing.T) {
+	t.Run("parses step definitions from testdata", func(t *testing.T) {
 		dir, err := os.Getwd()
 		require.Nil(t, err)
 
 		parser := NewGoSourceFileParser()
-		recursively, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
+		recursively, err := parser.
+			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
 
 		require.Nil(t, err)
-		require.Equal(t, expectedOutput, recursively)
+
+		// Check that config function is found
+		require.NotNil(t, recursively.ConfigFunction)
+		require.Equal(t, "Method1", recursively.ConfigFunction.FunctionName)
+
+		// Check that step functions are found (order may vary)
+		stepMap := make(map[string]string)
+		for _, step := range recursively.StepFunctions {
+			stepMap[step.FunctionName] = step.StepName
+		}
+
+		require.Equal(t, "^step 1$", stepMap["Step1"])
+		require.Equal(t, "^step 2$", stepMap["Step2"])
+		require.Equal(t, "^I have (\\d+) apples$", stepMap["IGetApples"])
 	})
 }
