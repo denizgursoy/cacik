@@ -407,7 +407,7 @@ func TestDuplicateStepDetection(t *testing.T) {
 		parser := NewGoSourceFileParser()
 		_, err = parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(
 			context.Background(),
-			filepath.Join(dir, "testdata-duplicate"),
+			filepath.Join(dir, "duplicate"),
 		)
 
 		require.NotNil(t, err)
