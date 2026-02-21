@@ -86,6 +86,9 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 	}
 
 	// Third pass: parse functions and transform step patterns
+	// Track step patterns to detect duplicates
+	stepPatternLocations := make(map[string]string) // pattern -> "function in file"
+
 	for _, packageData := range allPackages {
 		for filePath, node := range packageData.Files {
 			for _, dec := range node.Decls {
@@ -108,6 +111,14 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 						if err != nil {
 							return nil, fmt.Errorf("error in function %s: %w", decl.Name.Name, err)
 						}
+
+						// Check for duplicate step pattern
+						location := fmt.Sprintf("%s.%s in %s", importPathOfFuncDecl, decl.Name.Name, filePath)
+						if existingLocation, exists := stepPatternLocations[transformedStep]; exists {
+							return nil, fmt.Errorf("duplicate step pattern %q: first defined in %s, also found in %s",
+								transformedStep, existingLocation, location)
+						}
+						stepPatternLocations[transformedStep] = location
 
 						output.StepFunctions = append(output.StepFunctions, &generator.StepFunctionLocator{
 							StepName: transformedStep,

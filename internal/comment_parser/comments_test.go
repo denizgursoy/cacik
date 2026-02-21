@@ -398,3 +398,23 @@ func TestTransformStepPattern(t *testing.T) {
 		require.Contains(t, result, "3")
 	})
 }
+
+func TestDuplicateStepDetection(t *testing.T) {
+	t.Run("returns error for duplicate step patterns", func(t *testing.T) {
+		dir, err := os.Getwd()
+		require.Nil(t, err)
+
+		parser := NewGoSourceFileParser()
+		_, err = parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(
+			context.Background(),
+			filepath.Join(dir, "testdata-duplicate"),
+		)
+
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "duplicate step pattern")
+		require.Contains(t, err.Error(), "I have")
+		require.Contains(t, err.Error(), "items")
+		require.Contains(t, err.Error(), "FirstDuplicateStep")
+		require.Contains(t, err.Error(), "SecondDuplicateStep")
+	})
+}
