@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
@@ -1206,4 +1207,266 @@ func createDocumentWithBackground(backgroundStep, scenarioStep string) *messages
 			},
 		},
 	}
+}
+
+func TestStepExecutor_DurationType(t *testing.T) {
+	// Duration pattern from builtInTypes
+	durationPattern := `(-?(?:\d+\.?\d*(?:ns|us|µs|ms|s|m|h))+)`
+
+	t.Run("parses simple duration in seconds", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for 5s")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 5*time.Second, capturedDuration)
+	})
+
+	t.Run("parses compound duration", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for 1h30m")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 1*time.Hour+30*time.Minute, capturedDuration)
+	})
+
+	t.Run("parses milliseconds", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for 500ms")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 500*time.Millisecond, capturedDuration)
+	})
+
+	t.Run("parses negative duration", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for -30m")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, -30*time.Minute, capturedDuration)
+	})
+
+	t.Run("parses complex duration", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for 2h45m30s")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2*time.Hour+45*time.Minute+30*time.Second, capturedDuration)
+	})
+
+	t.Run("parses nanoseconds", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDuration time.Duration
+
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+			capturedDuration = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("wait for 100ns")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 100*time.Nanosecond, capturedDuration)
+	})
+}
+
+func TestStepExecutor_URLType(t *testing.T) {
+	// URL pattern from builtInTypes
+	urlPattern := `(https?://[^\s]+)`
+
+	t.Run("parses simple HTTP URL", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedURL *url.URL
+
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+			capturedURL = u
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("navigate to http://example.com")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "http", capturedURL.Scheme)
+		require.Equal(t, "example.com", capturedURL.Host)
+	})
+
+	t.Run("parses HTTPS URL with path", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedURL *url.URL
+
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+			capturedURL = u
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("navigate to https://api.example.com/users")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "https", capturedURL.Scheme)
+		require.Equal(t, "api.example.com", capturedURL.Host)
+		require.Equal(t, "/users", capturedURL.Path)
+	})
+
+	t.Run("parses URL with query string", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedURL *url.URL
+
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+			capturedURL = u
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("navigate to https://example.com/search?q=test&page=1")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "https", capturedURL.Scheme)
+		require.Equal(t, "/search", capturedURL.Path)
+		require.Equal(t, "q=test&page=1", capturedURL.RawQuery)
+	})
+
+	t.Run("parses URL with port", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedURL *url.URL
+
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+			capturedURL = u
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("navigate to http://localhost:8080/api")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "localhost:8080", capturedURL.Host)
+		require.Equal(t, "/api", capturedURL.Path)
+	})
+
+	t.Run("parses URL with fragment", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedURL *url.URL
+
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+			capturedURL = u
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("navigate to https://example.com/page#section")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "/page", capturedURL.Path)
+		require.Equal(t, "section", capturedURL.Fragment)
+	})
+}
+
+func TestStepExecutor_EmailType(t *testing.T) {
+	// Email pattern from builtInTypes
+	emailPattern := `([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`
+
+	t.Run("parses simple email", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedEmail string
+
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+			capturedEmail = email
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("user john@example.com logged in")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "john@example.com", capturedEmail)
+	})
+
+	t.Run("parses email with subdomain", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedEmail string
+
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+			capturedEmail = email
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("user admin@mail.company.org logged in")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "admin@mail.company.org", capturedEmail)
+	})
+
+	t.Run("parses email with plus tag", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedEmail string
+
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+			capturedEmail = email
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("user john.doe+newsletter@example.com logged in")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "john.doe+newsletter@example.com", capturedEmail)
+	})
+
+	t.Run("parses email with dots in local part", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedEmail string
+
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+			capturedEmail = email
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("user first.middle.last@domain.co.uk logged in")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "first.middle.last@domain.co.uk", capturedEmail)
+	})
 }

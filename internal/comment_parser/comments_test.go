@@ -311,6 +311,30 @@ func TestTransformStepPattern(t *testing.T) {
 		require.Contains(t, result, `[A-Za-z_]+/[A-Za-z_]+`)
 	})
 
+	t.Run("transforms {email} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^user {email} logged in$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^user ([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}) logged in$`, result)
+	})
+
+	t.Run("transforms {duration} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^wait for {duration}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^wait for (-?(?:\d+\.?\d*(?:ns|us|µs|ms|s|m|h))+)$`, result)
+	})
+
+	t.Run("transforms {url} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^navigate to {url}$", customTypes)
+		require.Nil(t, err)
+		require.Equal(t, `^navigate to (https?://[^\s]+)$`, result)
+	})
+
 	t.Run("handles mixed built-in and custom types", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{
 			"color": {

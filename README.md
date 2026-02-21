@@ -60,6 +60,9 @@ Cacik supports Cucumber-style parameter placeholders:
 | `{date}` | `time.Time` | Date values (midnight) | `15/01/2024`, `2024-01-15`, `15 Jan 2024` |
 | `{datetime}` | `time.Time` | Date and time | `2024-01-15 14:30`, `2024-01-15T14:30:00Z` |
 | `{timezone}` | `*time.Location` | Timezone | `UTC`, `Europe/London`, `+05:30` |
+| `{email}` | `string` | Email address | `user@example.com`, `name+tag@domain.org` |
+| `{duration}` | `time.Duration` | Go duration | `5s`, `1h30m`, `500ms` |
+| `{url}` | `*url.URL` | HTTP/HTTPS URL | `https://example.com/path?q=1` |
 
 Example:
 
@@ -111,6 +114,24 @@ func ConvertTo(ctx context.Context, loc *time.Location) (context.Context, error)
     fmt.Printf("Timezone: %s\n", loc.String())
     return ctx, nil
 }
+
+// @cacik `^user {email} logged in$`
+func UserLoggedIn(ctx context.Context, email string) (context.Context, error) {
+    fmt.Printf("User logged in: %s\n", email)
+    return ctx, nil
+}
+
+// @cacik `^wait for {duration}$`
+func WaitFor(ctx context.Context, d time.Duration) (context.Context, error) {
+    fmt.Printf("Waiting for: %s\n", d)
+    return ctx, nil
+}
+
+// @cacik `^navigate to {url}$`
+func NavigateTo(ctx context.Context, u *url.URL) (context.Context, error) {
+    fmt.Printf("Navigating to: %s\n", u.String())
+    return ctx, nil
+}
 ```
 
 Feature file:
@@ -127,6 +148,9 @@ Feature: Built-in types
     And the event is on 15/01/2024
     And the appointment is at 2024-01-15 14:30
     And convert to Europe/London
+    And user john@example.com logged in
+    And wait for 5s
+    And navigate to https://example.com/api
 ```
 
 ### Time, Date, DateTime, and Timezone Formats

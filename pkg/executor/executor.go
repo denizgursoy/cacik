@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -339,6 +340,24 @@ func (e *StepExecutor) convertArg(arg string, targetType reflect.Type) (reflect.
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(loc), nil
+	}
+
+	// Check for time.Duration
+	if targetType == reflect.TypeOf(time.Duration(0)) {
+		d, err := time.ParseDuration(arg)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as time.Duration: %w", arg, err)
+		}
+		return reflect.ValueOf(d), nil
+	}
+
+	// Check for *url.URL
+	if targetType == reflect.TypeOf((*url.URL)(nil)) {
+		u, err := url.Parse(arg)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as URL: %w", arg, err)
+		}
+		return reflect.ValueOf(u), nil
 	}
 
 	// Check if this is a custom type (named type that differs from its kind)

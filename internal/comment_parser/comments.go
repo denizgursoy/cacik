@@ -335,6 +335,18 @@ var builtInTypes = map[string]string{
 	// DateTime formats: combines date and time with separator (space, T, or @), with optional timezone
 	// Examples: 2024-01-15 14:30:00, 2024-01-15T14:30:00Z, 15/01/2024 2:30pm Europe/London
 	"datetime": `(\d{4}[-/]\d{2}[-/]\d{2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?)`,
+
+	// Email format: local@domain
+	// Examples: user@example.com, user.name+tag@sub.domain.org
+	"email": `([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})`,
+
+	// Duration format: Go time.Duration strings
+	// Examples: 5s, 1h30m, 500ms, 2h45m30s, 1.5h, -30m
+	"duration": `(-?(?:\d+\.?\d*(?:ns|us|µs|ms|s|m|h))+)`,
+
+	// URL format: HTTP/HTTPS URLs
+	// Examples: http://example.com, https://sub.domain.org/path?query=value#fragment
+	"url": `(https?://[^\s]+)`,
 }
 
 // transformStepPattern replaces {typename} placeholders with regex patterns
