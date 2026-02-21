@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"testing"
 	"time"
@@ -1469,4 +1470,654 @@ func TestStepExecutor_EmailType(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "first.middle.last@domain.co.uk", capturedEmail)
 	})
+}
+
+// =============================================================================
+// Rule and Background Tests
+// =============================================================================
+
+func TestStepExecutor_Execute_Rule(t *testing.T) {
+	t.Run("executes scenario inside rule", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executed := false
+
+		err := exec.RegisterStep("^rule scenario step$", func(ctx context.Context) (context.Context, error) {
+			executed = true
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithRule([]string{"rule scenario step"})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.True(t, executed)
+	})
+
+	t.Run("executes multiple scenarios inside rule", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithRule(
+			[]string{"scenario 1 step"},
+			[]string{"scenario 2 step"},
+			[]string{"scenario 3 step"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"scenario-1", "scenario-2", "scenario-3"}, executionOrder)
+	})
+
+	t.Run("executes rule background before each scenario", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^rule background step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "rule-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithRuleBackground(
+			[]string{"rule background step"},
+			[]string{"scenario 1 step"},
+			[]string{"scenario 2 step"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"rule-bg", "scenario-1", "rule-bg", "scenario-2"}, executionOrder)
+	})
+
+	t.Run("executes feature background before rule scenarios", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^feature background step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "feature-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^rule scenario step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "rule-scenario")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithFeatureBackgroundAndRule(
+			[]string{"feature background step"},
+			[]string{"rule scenario step"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"feature-bg", "rule-scenario"}, executionOrder)
+	})
+
+	t.Run("executes feature background then rule background", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^feature background step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "feature-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^rule background step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "rule-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "scenario")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithFeatureAndRuleBackground(
+			[]string{"feature background step"},
+			[]string{"rule background step"},
+			[]string{"scenario step"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"feature-bg", "rule-bg", "scenario"}, executionOrder)
+	})
+
+	t.Run("executes multiple rules", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^rule (\\d+) scenario step$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("rule-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithMultipleRules(
+			[][]string{{"rule 1 scenario step"}},
+			[][]string{{"rule 2 scenario step"}},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"rule-1", "rule-2"}, executionOrder)
+	})
+
+	t.Run("feature and rule backgrounds run before each scenario in rule", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^feature bg$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "feature-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^rule bg$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "rule-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario (\\d+)$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithFeatureAndRuleBackgroundMultipleScenarios(
+			[]string{"feature bg"},
+			[]string{"rule bg"},
+			[][]string{{"scenario 1"}, {"scenario 2"}},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"feature-bg", "rule-bg", "scenario-1",
+			"feature-bg", "rule-bg", "scenario-2",
+		}, executionOrder)
+	})
+}
+
+func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
+	t.Run("executes background before each of multiple scenarios", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^background step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithBackgroundAndMultipleScenarios(
+			[]string{"background step"},
+			[][]string{{"scenario 1 step"}, {"scenario 2 step"}, {"scenario 3 step"}},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"bg", "scenario-1",
+			"bg", "scenario-2",
+			"bg", "scenario-3",
+		}, executionOrder)
+	})
+
+	t.Run("background step failure stops execution", func(t *testing.T) {
+		exec := NewStepExecutor()
+		scenarioExecuted := false
+
+		err := exec.RegisterStep("^failing background step$", func(ctx context.Context) (context.Context, error) {
+			return ctx, errors.New("background failed")
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+			scenarioExecuted = true
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithBackground("failing background step", "scenario step")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "background failed")
+		require.False(t, scenarioExecuted)
+	})
+
+	t.Run("background with parameters", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedCount int
+		var capturedName string
+
+		err := exec.RegisterStep("^I have (\\d+) items$", func(ctx context.Context, count int) (context.Context, error) {
+			capturedCount = count
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^my name is (\\w+)$", func(ctx context.Context, name string) (context.Context, error) {
+			capturedName = name
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithBackgroundSteps(
+			[]string{"I have 42 items"},
+			[]string{"my name is John"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 42, capturedCount)
+		require.Equal(t, "John", capturedName)
+	})
+
+	t.Run("multiple background steps execute in order", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^background step (\\d+)$", func(ctx context.Context, num int) (context.Context, error) {
+			executionOrder = append(executionOrder, fmt.Sprintf("bg-%d", num))
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "scenario")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithBackgroundSteps(
+			[]string{"background step 1", "background step 2", "background step 3"},
+			[]string{"scenario step"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"bg-1", "bg-2", "bg-3", "scenario"}, executionOrder)
+	})
+}
+
+func TestStepExecutor_Execute_ComplexFeatureStructure(t *testing.T) {
+	t.Run("feature with background, standalone scenarios, and rules", func(t *testing.T) {
+		exec := NewStepExecutor()
+		executionOrder := []string{}
+
+		err := exec.RegisterStep("^feature bg$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "feature-bg")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^standalone scenario$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "standalone")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		err = exec.RegisterStep("^rule scenario$", func(ctx context.Context) (context.Context, error) {
+			executionOrder = append(executionOrder, "rule-scenario")
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createComplexDocument(
+			[]string{"feature bg"},          // feature background
+			[]string{"standalone scenario"}, // standalone scenario
+			[]string{"rule scenario"},       // rule scenario
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{
+			"feature-bg", "standalone",
+			"feature-bg", "rule-scenario",
+		}, executionOrder)
+	})
+
+	t.Run("context is preserved across background and scenario steps", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		type ctxKey string
+		const valueKey ctxKey = "value"
+
+		err := exec.RegisterStep("^I set value to (\\d+)$", func(ctx context.Context, val int) (context.Context, error) {
+			return context.WithValue(ctx, valueKey, val), nil
+		})
+		require.NoError(t, err)
+
+		var capturedValue int
+		err = exec.RegisterStep("^the value should be (\\d+)$", func(ctx context.Context, expected int) (context.Context, error) {
+			capturedValue = ctx.Value(valueKey).(int)
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithBackgroundSteps(
+			[]string{"I set value to 100"},
+			[]string{"the value should be 100"},
+		)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 100, capturedValue)
+	})
+}
+
+// =============================================================================
+// Helper Functions for Rule and Background Documents
+// =============================================================================
+
+// createDocumentWithRule creates a document with a single rule containing multiple scenarios
+func createDocumentWithRule(scenarioStepSets ...[]string) *messages.GherkinDocument {
+	ruleChildren := make([]*messages.RuleChild, len(scenarioStepSets))
+	for i, stepSet := range scenarioStepSets {
+		steps := make([]*messages.Step, len(stepSet))
+		for j, text := range stepSet {
+			steps[j] = &messages.Step{Text: text}
+		}
+		ruleChildren[i] = &messages.RuleChild{
+			Scenario: &messages.Scenario{Steps: steps},
+		}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Rule: &messages.Rule{
+						Children: ruleChildren,
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithRuleBackground creates a document with a rule that has a background
+func createDocumentWithRuleBackground(bgSteps []string, scenarioStepSets ...[]string) *messages.GherkinDocument {
+	bgStepsMsg := make([]*messages.Step, len(bgSteps))
+	for i, text := range bgSteps {
+		bgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleChildren := make([]*messages.RuleChild, len(scenarioStepSets)+1)
+	ruleChildren[0] = &messages.RuleChild{
+		Background: &messages.Background{Steps: bgStepsMsg},
+	}
+
+	for i, stepSet := range scenarioStepSets {
+		steps := make([]*messages.Step, len(stepSet))
+		for j, text := range stepSet {
+			steps[j] = &messages.Step{Text: text}
+		}
+		ruleChildren[i+1] = &messages.RuleChild{
+			Scenario: &messages.Scenario{Steps: steps},
+		}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Rule: &messages.Rule{
+						Children: ruleChildren,
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithFeatureBackgroundAndRule creates a document with feature-level background and a rule
+func createDocumentWithFeatureBackgroundAndRule(featureBgSteps, ruleScenarioSteps []string) *messages.GherkinDocument {
+	featureBgStepsMsg := make([]*messages.Step, len(featureBgSteps))
+	for i, text := range featureBgSteps {
+		featureBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleScenarioStepsMsg := make([]*messages.Step, len(ruleScenarioSteps))
+	for i, text := range ruleScenarioSteps {
+		ruleScenarioStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Background: &messages.Background{Steps: featureBgStepsMsg},
+				},
+				{
+					Rule: &messages.Rule{
+						Children: []*messages.RuleChild{
+							{
+								Scenario: &messages.Scenario{Steps: ruleScenarioStepsMsg},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithFeatureAndRuleBackground creates a document with both feature and rule backgrounds
+func createDocumentWithFeatureAndRuleBackground(featureBgSteps, ruleBgSteps, scenarioSteps []string) *messages.GherkinDocument {
+	featureBgStepsMsg := make([]*messages.Step, len(featureBgSteps))
+	for i, text := range featureBgSteps {
+		featureBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleBgStepsMsg := make([]*messages.Step, len(ruleBgSteps))
+	for i, text := range ruleBgSteps {
+		ruleBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	scenarioStepsMsg := make([]*messages.Step, len(scenarioSteps))
+	for i, text := range scenarioSteps {
+		scenarioStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Background: &messages.Background{Steps: featureBgStepsMsg},
+				},
+				{
+					Rule: &messages.Rule{
+						Children: []*messages.RuleChild{
+							{
+								Background: &messages.Background{Steps: ruleBgStepsMsg},
+							},
+							{
+								Scenario: &messages.Scenario{Steps: scenarioStepsMsg},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithFeatureAndRuleBackgroundMultipleScenarios creates a document with both backgrounds and multiple scenarios
+func createDocumentWithFeatureAndRuleBackgroundMultipleScenarios(featureBgSteps, ruleBgSteps []string, scenarioStepSets [][]string) *messages.GherkinDocument {
+	featureBgStepsMsg := make([]*messages.Step, len(featureBgSteps))
+	for i, text := range featureBgSteps {
+		featureBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleBgStepsMsg := make([]*messages.Step, len(ruleBgSteps))
+	for i, text := range ruleBgSteps {
+		ruleBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleChildren := make([]*messages.RuleChild, len(scenarioStepSets)+1)
+	ruleChildren[0] = &messages.RuleChild{
+		Background: &messages.Background{Steps: ruleBgStepsMsg},
+	}
+
+	for i, stepSet := range scenarioStepSets {
+		steps := make([]*messages.Step, len(stepSet))
+		for j, text := range stepSet {
+			steps[j] = &messages.Step{Text: text}
+		}
+		ruleChildren[i+1] = &messages.RuleChild{
+			Scenario: &messages.Scenario{Steps: steps},
+		}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Background: &messages.Background{Steps: featureBgStepsMsg},
+				},
+				{
+					Rule: &messages.Rule{
+						Children: ruleChildren,
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithMultipleRules creates a document with multiple rules
+func createDocumentWithMultipleRules(rules ...[][]string) *messages.GherkinDocument {
+	featureChildren := make([]*messages.FeatureChild, len(rules))
+
+	for i, rule := range rules {
+		ruleChildren := make([]*messages.RuleChild, len(rule))
+		for j, scenarioSteps := range rule {
+			steps := make([]*messages.Step, len(scenarioSteps))
+			for k, text := range scenarioSteps {
+				steps[k] = &messages.Step{Text: text}
+			}
+			ruleChildren[j] = &messages.RuleChild{
+				Scenario: &messages.Scenario{Steps: steps},
+			}
+		}
+		featureChildren[i] = &messages.FeatureChild{
+			Rule: &messages.Rule{Children: ruleChildren},
+		}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: featureChildren,
+		},
+	}
+}
+
+// createDocumentWithBackgroundAndMultipleScenarios creates a document with background and multiple scenarios
+func createDocumentWithBackgroundAndMultipleScenarios(bgSteps []string, scenarioStepSets [][]string) *messages.GherkinDocument {
+	bgStepsMsg := make([]*messages.Step, len(bgSteps))
+	for i, text := range bgSteps {
+		bgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	featureChildren := make([]*messages.FeatureChild, len(scenarioStepSets)+1)
+	featureChildren[0] = &messages.FeatureChild{
+		Background: &messages.Background{Steps: bgStepsMsg},
+	}
+
+	for i, stepSet := range scenarioStepSets {
+		steps := make([]*messages.Step, len(stepSet))
+		for j, text := range stepSet {
+			steps[j] = &messages.Step{Text: text}
+		}
+		featureChildren[i+1] = &messages.FeatureChild{
+			Scenario: &messages.Scenario{Steps: steps},
+		}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: featureChildren,
+		},
+	}
+}
+
+// createDocumentWithBackgroundSteps creates a document with multiple background steps and scenario steps
+func createDocumentWithBackgroundSteps(bgSteps, scenarioSteps []string) *messages.GherkinDocument {
+	bgStepsMsg := make([]*messages.Step, len(bgSteps))
+	for i, text := range bgSteps {
+		bgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	scenarioStepsMsg := make([]*messages.Step, len(scenarioSteps))
+	for i, text := range scenarioSteps {
+		scenarioStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Background: &messages.Background{Steps: bgStepsMsg},
+				},
+				{
+					Scenario: &messages.Scenario{Steps: scenarioStepsMsg},
+				},
+			},
+		},
+	}
+}
+
+// createComplexDocument creates a document with feature background, standalone scenario, and rule with scenario
+func createComplexDocument(featureBgSteps, standaloneScenarioSteps, ruleScenarioSteps []string) *messages.GherkinDocument {
+	featureBgStepsMsg := make([]*messages.Step, len(featureBgSteps))
+	for i, text := range featureBgSteps {
+		featureBgStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	standaloneStepsMsg := make([]*messages.Step, len(standaloneScenarioSteps))
+	for i, text := range standaloneScenarioSteps {
+		standaloneStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	ruleStepsMsg := make([]*messages.Step, len(ruleScenarioSteps))
+	for i, text := range ruleScenarioSteps {
+		ruleStepsMsg[i] = &messages.Step{Text: text}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Background: &messages.Background{Steps: featureBgStepsMsg},
+				},
+				{
+					Scenario: &messages.Scenario{Steps: standaloneStepsMsg},
+				},
+				{
+					Rule: &messages.Rule{
+						Children: []*messages.RuleChild{
+							{
+								Scenario: &messages.Scenario{Steps: ruleStepsMsg},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
