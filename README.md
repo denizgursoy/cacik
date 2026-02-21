@@ -414,7 +414,7 @@ import (
 func main() {
 	err := runner.NewCucumberRunner().
 		RegisterStep("^I have (\\d+) apples$", IHaveApples).
-		RunWithTags()
+		Run()
 
 	if err != nil {
 		log.Fatal(err)
@@ -434,22 +434,83 @@ It will print `I have 3 apples`
 
 ## Running with Tags
 
-You can filter scenarios by tags:
+Cacik supports Cucumber tag expressions for filtering scenarios. Tags are passed via the `--tags` command-line flag.
 
-```gherkin
-@smoke
-Feature: My feature
+### Tag Expression Syntax
 
-  @important
-  Scenario: Important test
-    When I have 5 apples
+Tag expressions support `and`, `or`, `not` operators and parentheses for complex filtering:
+
+| Expression | Description |
+|------------|-------------|
+| `@smoke` | Scenarios tagged with `@smoke` |
+| `@smoke and @fast` | Scenarios with both `@smoke` AND `@fast` |
+| `@gui or @database` | Scenarios with either `@gui` OR `@database` |
+| `not @slow` | Scenarios NOT tagged with `@slow` |
+| `@wip and not @slow` | Scenarios with `@wip` but NOT `@slow` |
+| `(@smoke or @ui) and not @slow` | Complex expression with parentheses |
+
+### Examples
+
+```shell
+# Run all scenarios
+go run .
+
+# Run only @smoke scenarios
+go run . --tags "@smoke"
+
+# Run scenarios with both @smoke AND @fast
+go run . --tags "@smoke and @fast"
+
+# Run scenarios with @gui OR @database
+go run . --tags "@gui or @database"
+
+# Run scenarios that are NOT @slow
+go run . --tags "not @slow"
+
+# Complex expression
+go run . --tags "(@smoke or @ui) and not @slow"
+
+# Alternative syntax with equals sign
+go run . --tags="@smoke and @fast"
 ```
 
-```go
-// Run only scenarios with @smoke or @important tags
-runner.NewCucumberRunner().
-    RegisterStep("^I have (\\d+) apples$", IHaveApples).
-    RunWithTags("smoke", "important")
+### Tag Inheritance
+
+Tags are inherited following the Gherkin specification:
+- **Scenario** inherits tags from its parent **Feature**
+- **Scenario** inside a **Rule** inherits tags from both **Feature** and **Rule**
+
+```gherkin
+@billing
+Feature: Billing
+
+  @smoke
+  Scenario: Quick payment
+    # This scenario has both @billing and @smoke tags
+    When I make a payment
+
+  Rule: Subscriptions
+    @subscription
+    Scenario: Monthly billing
+      # This scenario has @billing, @subscription tags
+      When I check my subscription
+```
+
+```shell
+# Matches "Quick payment" (has @billing)
+go run . --tags "@billing"
+
+# Matches "Quick payment" (has @smoke)
+go run . --tags "@smoke"
+
+# Matches "Monthly billing" (has @subscription)
+go run . --tags "@subscription"
+
+# Matches both scenarios (both have @billing from feature)
+go run . --tags "@billing"
+
+# Matches "Quick payment" only (needs both @billing AND @smoke)
+go run . --tags "@billing and @smoke"
 ```
 
 ## Configuration and Hooks

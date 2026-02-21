@@ -122,7 +122,7 @@ func (o *Output) Generate(writer io.Writer) error {
 	for _, function := range o.StepFunctions {
 		functionBody.Id("RegisterStep").Call(jen.Lit(function.StepName), jen.Qual(function.FullPackageName, function.FunctionName)).Id(".").Line()
 	}
-	functionBody.Id("RunWithTags").Call().Line().Line()
+	functionBody.Id("Run").Call().Line().Line()
 	functionBody.If(jen.Id("err").Op("!=").Nil()).Block(
 		jen.Qual("log", "Fatal").Call(jen.Id("err")),
 	)

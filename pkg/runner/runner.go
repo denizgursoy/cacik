@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"slices"
+	"strings"
+
+	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
 	messages "github.com/cucumber/messages/go/v21"
 	"github.com/denizgursoy/cacik/pkg/executor"
@@ -65,9 +67,29 @@ func (c *CucumberRunner) RegisterCustomType(name, underlying string, values map[
 	return c
 }
 
-func (c *CucumberRunner) RunWithTags(userTags ...string) error {
+// Run executes all feature files, optionally filtering by tag expression from CLI args.
+// Tag expression is passed via --tags flag, e.g.: go run . --tags "@smoke and @fast"
+// Supports Cucumber tag expression syntax: and, or, not, parentheses
+// Examples:
+//   - @smoke
+//   - @smoke and @fast
+//   - @gui or @database
+//   - @wip and not @slow
+//   - (@smoke or @ui) and not @slow
+func (c *CucumberRunner) Run() error {
 	if len(c.featureDirectories) == 0 {
 		c.featureDirectories = append(c.featureDirectories, ".")
+	}
+
+	// Parse tag expression from CLI arguments
+	tagExpr := parseTagsFromArgs()
+	var evaluator tagexpressions.Evaluatable
+	if tagExpr != "" {
+		var err error
+		evaluator, err = tagexpressions.Parse(tagExpr)
+		if err != nil {
+			return fmt.Errorf("invalid tag expression %q: %w", tagExpr, err)
+		}
 	}
 
 	featureFiles, err := gherkin_parser.SearchFeatureFilesIn(c.featureDirectories)
@@ -85,9 +107,11 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 			return fmt.Errorf("gherkin parse error in file %s, error=%w", file, err)
 		}
 
-		// Skip documents that don't match tags (if tags specified)
-		if len(userTags) > 0 && document.Feature != nil {
-			if !includeTags(document.Feature.Tags, userTags) {
+		// Filter document by tags if expression provided
+		if evaluator != nil && document.Feature != nil {
+			document = filterDocumentByTags(document, evaluator)
+			// Skip if no scenarios match
+			if document == nil || !hasScenarios(document) {
 				continue
 			}
 		}
@@ -101,30 +125,133 @@ func (c *CucumberRunner) RunWithTags(userTags ...string) error {
 	return nil
 }
 
-func getBackground(feature *messages.Feature) *messages.Background {
-	for _, child := range feature.Children {
+// parseTagsFromArgs extracts the tag expression from command-line arguments.
+// Supports: --tags "@expression" or --tags="@expression"
+func parseTagsFromArgs() string {
+	args := os.Args[1:]
+	for i, arg := range args {
+		if arg == "--tags" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--tags=") {
+			return strings.TrimPrefix(arg, "--tags=")
+		}
+	}
+	return ""
+}
+
+// filterDocumentByTags returns a copy of the document with only matching scenarios.
+// Tags are inherited: Feature tags → Rule tags → Scenario tags
+func filterDocumentByTags(doc *messages.GherkinDocument, evaluator tagexpressions.Evaluatable) *messages.GherkinDocument {
+	if doc.Feature == nil {
+		return doc
+	}
+
+	featureTags := extractTagNames(doc.Feature.Tags)
+	filteredChildren := make([]*messages.FeatureChild, 0)
+
+	for _, child := range doc.Feature.Children {
 		if child.Background != nil {
-			return child.Background
+			// Always include backgrounds
+			filteredChildren = append(filteredChildren, child)
+		} else if child.Scenario != nil {
+			// Check if scenario matches tags (inherit feature tags)
+			scenarioTags := mergeTags(featureTags, extractTagNames(child.Scenario.Tags))
+			if evaluator.Evaluate(scenarioTags) {
+				filteredChildren = append(filteredChildren, child)
+			}
+		} else if child.Rule != nil {
+			// Filter scenarios within the rule
+			filteredRule := filterRuleByTags(child.Rule, featureTags, evaluator)
+			if filteredRule != nil && hasRuleScenarios(filteredRule) {
+				filteredChildren = append(filteredChildren, &messages.FeatureChild{Rule: filteredRule})
+			}
 		}
 	}
 
-	return nil
+	// Return new document with filtered children
+	return &messages.GherkinDocument{
+		Uri:      doc.Uri,
+		Comments: doc.Comments,
+		Feature: &messages.Feature{
+			Location:    doc.Feature.Location,
+			Tags:        doc.Feature.Tags,
+			Language:    doc.Feature.Language,
+			Keyword:     doc.Feature.Keyword,
+			Name:        doc.Feature.Name,
+			Description: doc.Feature.Description,
+			Children:    filteredChildren,
+		},
+	}
 }
 
-func getRuleBackground(rule *messages.Rule) *messages.Background {
+// filterRuleByTags returns a copy of the rule with only matching scenarios.
+func filterRuleByTags(rule *messages.Rule, featureTags []string, evaluator tagexpressions.Evaluatable) *messages.Rule {
+	ruleTags := mergeTags(featureTags, extractTagNames(rule.Tags))
+	filteredChildren := make([]*messages.RuleChild, 0)
+
 	for _, child := range rule.Children {
 		if child.Background != nil {
-			return child.Background
+			// Always include backgrounds
+			filteredChildren = append(filteredChildren, child)
+		} else if child.Scenario != nil {
+			// Check if scenario matches tags (inherit feature + rule tags)
+			scenarioTags := mergeTags(ruleTags, extractTagNames(child.Scenario.Tags))
+			if evaluator.Evaluate(scenarioTags) {
+				filteredChildren = append(filteredChildren, child)
+			}
 		}
 	}
 
-	return nil
+	return &messages.Rule{
+		Location:    rule.Location,
+		Tags:        rule.Tags,
+		Keyword:     rule.Keyword,
+		Name:        rule.Name,
+		Description: rule.Description,
+		Children:    filteredChildren,
+		Id:          rule.Id,
+	}
 }
 
-func includeTags(docTags []*messages.Tag, userTags []string) bool {
-	for _, tag := range docTags {
-		s := tag.Name[1:]
-		if slices.Contains(userTags, s) {
+// extractTagNames extracts tag names from a slice of Tag pointers.
+// Returns tags WITH the @ prefix (e.g., "@smoke", "@fast")
+func extractTagNames(tags []*messages.Tag) []string {
+	names := make([]string, len(tags))
+	for i, tag := range tags {
+		names[i] = tag.Name // Includes @ prefix
+	}
+	return names
+}
+
+// mergeTags combines parent and child tags into a single slice.
+func mergeTags(parent, child []string) []string {
+	result := make([]string, 0, len(parent)+len(child))
+	result = append(result, parent...)
+	result = append(result, child...)
+	return result
+}
+
+// hasScenarios checks if a document has any scenarios.
+func hasScenarios(doc *messages.GherkinDocument) bool {
+	if doc.Feature == nil {
+		return false
+	}
+	for _, child := range doc.Feature.Children {
+		if child.Scenario != nil {
+			return true
+		}
+		if child.Rule != nil && hasRuleScenarios(child.Rule) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasRuleScenarios checks if a rule has any scenarios.
+func hasRuleScenarios(rule *messages.Rule) bool {
+	for _, child := range rule.Children {
+		if child.Scenario != nil {
 			return true
 		}
 	}

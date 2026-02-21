@@ -46,7 +46,7 @@ func main() {
 		WithConfigFunc(a.ConfigFunction).
 		RegisterStep("^step 1$", package1.Step1Function).
 		RegisterStep("^step 2$", package2.Step2Function).
-		RunWithTags()
+		Run()
 
 	if err != nil {
 		log.Fatal(err)

@@ -83,7 +83,7 @@ func main() {
 		RegisterStep("^the feature is (enabled|disabled)$", stepbool.FeatureToggle).
 		RegisterStep("^priority is ((?i:1|2|3|high|low|medium|priorityhigh|prioritylow|prioritymedium))$", steppriority.SetPriority).
 		RegisterStep("^the priority is ((?i:1|2|3|high|low|medium|priorityhigh|prioritylow|prioritymedium))$", steppriority.PriorityIs).
-		RunWithTags()
+		Run()
 
 	if err != nil {
 		log.Fatal(err)
