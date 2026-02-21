@@ -24,6 +24,7 @@ func TestParse(t *testing.T) {
 func TestSearchFeatureFilesIn(t *testing.T) {
 	t.Run("should return all feature files in a directory", func(t *testing.T) {
 		expectedFiles := []string{
+			"testdata/feat.feature",
 			"testdata/feature-source-1/source-one.feature",
 			"testdata/feature-source-2/source-two.feature",
 			"testdata/source-three.feature",

@@ -345,7 +345,7 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 		require.Equal(t, Color("red"), capturedColor)
 	})
 
-	t.Run("case-insensitive matching", func(t *testing.T) {
+	t.Run("case-insensitive matching with explicit pattern", func(t *testing.T) {
 		exec := NewStepExecutor()
 
 		// Register with lowercase keys for case-insensitive matching
@@ -366,6 +366,45 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 		err = exec.Execute(doc)
 		require.NoError(t, err)
 		require.Equal(t, Color("red"), capturedColor) // Should be lowercase
+	})
+
+	t.Run("case-insensitive matching with (?i:) pattern", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register with lowercase keys for case-insensitive matching
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":  "red",
+			"blue": "blue",
+		})
+
+		var capturedColor Color
+
+		// Use (?i:...) for case-insensitive matching - this is what the generator produces
+		err := exec.RegisterStep("^I select ((?i:red|blue))$", func(ctx context.Context, c Color) (context.Context, error) {
+			capturedColor = c
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		// Test various case combinations
+		testCases := []struct {
+			input    string
+			expected Color
+		}{
+			{"RED", Color("red")},
+			{"Red", Color("red")},
+			{"red", Color("red")},
+			{"rEd", Color("red")},
+			{"BLUE", Color("blue")},
+			{"Blue", Color("blue")},
+			{"blue", Color("blue")},
+		}
+		for _, tc := range testCases {
+			doc := createDocument("I select " + tc.input)
+			err = exec.Execute(doc)
+			require.NoError(t, err, "Failed for: %s", tc.input)
+			require.Equal(t, tc.expected, capturedColor, "Wrong color for: %s", tc.input)
+		}
 	})
 
 	t.Run("rejects invalid value", func(t *testing.T) {

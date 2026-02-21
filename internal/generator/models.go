@@ -59,6 +59,7 @@ func (ct *CustomType) NamesAndValues() map[string]string {
 }
 
 // RegexPattern returns a regex pattern that matches any of the constant values or names
+// The pattern uses (?i:...) for case-insensitive matching
 func (ct *CustomType) RegexPattern() string {
 	seen := make(map[string]bool)
 	var parts []string
@@ -79,7 +80,8 @@ func (ct *CustomType) RegexPattern() string {
 	}
 
 	sort.Strings(parts)
-	return strings.Join(parts, "|")
+	// Use (?i:...) for case-insensitive matching
+	return "(?i:" + strings.Join(parts, "|") + ")"
 }
 
 // regexEscape escapes special regex characters in a string
