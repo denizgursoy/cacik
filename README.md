@@ -49,13 +49,17 @@ func IHaveApples(ctx context.Context, appleCount int) (context.Context, error) {
 
 Cacik supports Cucumber-style parameter placeholders:
 
-| Placeholder | Pattern | Description | Example Match |
+| Placeholder | Go Type | Description | Example Match |
 |-------------|---------|-------------|---------------|
-| `{int}` | `-?\d+` | Integer (positive/negative) | `42`, `-5` |
-| `{float}` | `-?\d*\.?\d+` | Floating point number | `3.14`, `-0.5` |
-| `{word}` | `\w+` | Single word (no spaces) | `hello`, `test123` |
-| `{string}` | `"[^"]*"` | Double-quoted string | `"hello world"` |
-| `{any}` or `{}` | `.*` | Matches anything | `anything here` |
+| `{int}` | `int` | Integer (positive/negative) | `42`, `-5` |
+| `{float}` | `float64` | Floating point number | `3.14`, `-0.5` |
+| `{word}` | `string` | Single word (no spaces) | `hello`, `test123` |
+| `{string}` | `string` | Double-quoted string | `"hello world"` |
+| `{any}` or `{}` | `string` | Matches anything | `anything here` |
+| `{time}` | `time.Time` | Time values (zero date) | `14:30`, `2:30pm`, `14:30 Europe/London` |
+| `{date}` | `time.Time` | Date values (midnight) | `15/01/2024`, `2024-01-15`, `15 Jan 2024` |
+| `{datetime}` | `time.Time` | Date and time | `2024-01-15 14:30`, `2024-01-15T14:30:00Z` |
+| `{timezone}` | `*time.Location` | Timezone | `UTC`, `Europe/London`, `+05:30` |
 
 Example:
 
@@ -83,6 +87,30 @@ func Say(ctx context.Context, message string) (context.Context, error) {
     fmt.Printf("Message: %s\n", message)
     return ctx, nil
 }
+
+// @cacik `^the meeting is at {time}$`
+func MeetingAt(ctx context.Context, t time.Time) (context.Context, error) {
+    fmt.Printf("Meeting at: %s\n", t.Format("15:04"))
+    return ctx, nil
+}
+
+// @cacik `^the event is on {date}$`
+func EventOn(ctx context.Context, d time.Time) (context.Context, error) {
+    fmt.Printf("Event on: %s\n", d.Format("2006-01-02"))
+    return ctx, nil
+}
+
+// @cacik `^the appointment is at {datetime}$`
+func AppointmentAt(ctx context.Context, dt time.Time) (context.Context, error) {
+    fmt.Printf("Appointment at: %s\n", dt.Format(time.RFC3339))
+    return ctx, nil
+}
+
+// @cacik `^convert to {timezone}$`
+func ConvertTo(ctx context.Context, loc *time.Location) (context.Context, error) {
+    fmt.Printf("Timezone: %s\n", loc.String())
+    return ctx, nil
+}
 ```
 
 Feature file:
@@ -95,7 +123,68 @@ Feature: Built-in types
     And the price is 19.99
     And my name is John
     And I say "Hello World"
+    And the meeting is at 2:30pm
+    And the event is on 15/01/2024
+    And the appointment is at 2024-01-15 14:30
+    And convert to Europe/London
 ```
+
+### Time, Date, DateTime, and Timezone Formats
+
+All time-related types parse to Go's `time.Time` or `*time.Location` types.
+
+#### `{time}` - Time Values → `time.Time`
+
+Parses to `time.Time` with zero date (0001-01-01). Supports optional timezone.
+
+| Format | Examples |
+|--------|----------|
+| 24-hour | `14:30`, `09:15`, `00:00`, `23:59` |
+| With seconds | `14:30:45`, `09:15:00` |
+| With milliseconds | `14:30:45.123`, `09:15:00.500` |
+| 12-hour AM/PM | `2:30pm`, `9:15am`, `2:30 PM`, `12:00am` |
+| With timezone Z | `14:30Z`, `14:30:00Z` |
+| With timezone offset | `14:30+05:30`, `14:30-08:00`, `14:30+0530` |
+| With IANA timezone | `14:30 Europe/London`, `2:30pm America/New_York` |
+
+#### `{date}` - Date Values → `time.Time`
+
+Parses to `time.Time` at midnight (00:00:00) in local timezone. **EU format (DD/MM/YYYY) is the default.**
+
+| Format | Examples |
+|--------|----------|
+| EU (DD/MM/YYYY) - default | `15/01/2024`, `31/12/2024` |
+| EU with dashes | `15-01-2024`, `31-12-2024` |
+| EU with dots | `15.01.2024`, `31.12.2024` |
+| ISO (YYYY-MM-DD) | `2024-01-15`, `2024-12-31` |
+| ISO with slashes | `2024/01/15`, `2024/12/31` |
+| Written (Day Month Year) | `15 Jan 2024`, `31 December 2024` |
+| Written (Month Day, Year) | `Jan 15, 2024`, `January 15, 2024` |
+
+#### `{datetime}` - DateTime Values → `time.Time`
+
+Combines date and time. Supports optional timezone.
+
+| Format | Examples |
+|--------|----------|
+| ISO with space | `2024-01-15 14:30`, `2024-01-15 14:30:45` |
+| ISO with T | `2024-01-15T14:30`, `2024-01-15T14:30:45` |
+| With milliseconds | `2024-01-15 14:30:45.123` |
+| With AM/PM | `2024-01-15 2:30pm`, `15/01/2024 9:00am` |
+| With timezone Z | `2024-01-15T14:30:00Z` |
+| With timezone offset | `2024-01-15T14:30:00+05:30`, `2024-01-15 14:30-08:00` |
+| With IANA timezone | `2024-01-15 14:30 Europe/London`, `15/01/2024 2:30pm America/New_York` |
+
+#### `{timezone}` - Timezone Values → `*time.Location`
+
+Parses to Go's `*time.Location`.
+
+| Format | Examples |
+|--------|----------|
+| UTC | `UTC`, `Z` |
+| Offset with colon | `+05:30`, `-08:00`, `+00:00` |
+| Offset without colon | `+0530`, `-0800` |
+| IANA timezone names | `Europe/London`, `America/New_York`, `Asia/Tokyo` |
 
 ### Supported Go Parameter Types
 
@@ -104,6 +193,8 @@ Feature: Built-in types
 - `uint`, `uint8`, `uint16`, `uint32`, `uint64` - unsigned integers
 - `float32`, `float64` - floating point values
 - `bool` - boolean values (see below)
+- `time.Time` - for `{time}`, `{date}`, `{datetime}` types
+- `*time.Location` - for `{timezone}` type
 - `context.Context` - automatically passed (should be first parameter)
 
 ### Using Regex Directly

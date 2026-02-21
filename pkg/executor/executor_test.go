@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	messages "github.com/cucumber/messages/go/v21"
 	"github.com/stretchr/testify/require"
@@ -505,6 +506,655 @@ func TestStepExecutor_CustomTypeWithoutRegistration(t *testing.T) {
 		err = exec.Execute(doc)
 		require.NoError(t, err)
 		require.Equal(t, Color("anything"), capturedColor)
+	})
+}
+
+func TestStepExecutor_MixedTypes(t *testing.T) {
+	t.Run("handles custom type + word + int + float combination", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register custom type with case-insensitive values
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":   "red",
+			"blue":  "blue",
+			"green": "green",
+		})
+
+		var (
+			capturedColor   Color
+			capturedVehicle string
+			capturedDoors   int
+			capturedPrice   float64
+		)
+
+		// Pattern combines: custom type {color}, normal regex (car|bike), {int}, {float}
+		// This simulates: ^I want a {color} (car|bike) with {int} doors costing {float} dollars$
+		err := exec.RegisterStep(
+			`^I want a ((?i:blue|green|red)) (car|bike) with (-?\d+) doors costing (-?\d*\.?\d+) dollars$`,
+			func(ctx context.Context, color Color, vehicle string, doors int, price float64) (context.Context, error) {
+				capturedColor = color
+				capturedVehicle = vehicle
+				capturedDoors = doors
+				capturedPrice = price
+				return ctx, nil
+			},
+		)
+		require.NoError(t, err)
+
+		// Test with lowercase color
+		doc := createDocument("I want a red car with 4 doors costing 25000.50 dollars")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("red"), capturedColor)
+		require.Equal(t, "car", capturedVehicle)
+		require.Equal(t, 4, capturedDoors)
+		require.Equal(t, 25000.50, capturedPrice)
+
+		// Test with uppercase color
+		doc = createDocument("I want a BLUE bike with 0 doors costing 999.99 dollars")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("blue"), capturedColor)
+		require.Equal(t, "bike", capturedVehicle)
+		require.Equal(t, 0, capturedDoors)
+		require.Equal(t, 999.99, capturedPrice)
+
+		// Test with mixed case color
+		doc = createDocument("I want a GrEeN car with 2 doors costing 15000 dollars")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("green"), capturedColor)
+		require.Equal(t, "car", capturedVehicle)
+		require.Equal(t, 2, capturedDoors)
+		require.Equal(t, 15000.0, capturedPrice)
+	})
+
+	t.Run("handles custom type + string + priority combination", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		// Register Color custom type
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":  "red",
+			"blue": "blue",
+		})
+
+		// Register Priority custom type
+		exec.RegisterCustomType("Priority", "int", map[string]string{
+			"low":    "1",
+			"medium": "2",
+			"high":   "3",
+			"1":      "1",
+			"2":      "2",
+			"3":      "3",
+		})
+
+		var (
+			capturedColor    Color
+			capturedName     string
+			capturedPriority Priority
+		)
+
+		// Pattern: {color} item named {string} at {priority} priority
+		err := exec.RegisterStep(
+			`^a ((?i:blue|red)) item named "([^"]*)" at ((?i:1|2|3|high|low|medium)) priority$`,
+			func(ctx context.Context, color Color, name string, priority Priority) (context.Context, error) {
+				capturedColor = color
+				capturedName = name
+				capturedPriority = priority
+				return ctx, nil
+			},
+		)
+		require.NoError(t, err)
+
+		// Test with color name and priority name
+		doc := createDocument(`a RED item named "Widget" at high priority`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("red"), capturedColor)
+		require.Equal(t, "Widget", capturedName)
+		require.Equal(t, Priority(3), capturedPriority)
+
+		// Test with color name and priority value
+		doc = createDocument(`a blue item named "Gadget Pro" at 1 priority`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("blue"), capturedColor)
+		require.Equal(t, "Gadget Pro", capturedName)
+		require.Equal(t, Priority(1), capturedPriority)
+
+		// Test with mixed case
+		doc = createDocument(`a Blue item named "Test Item" at MEDIUM priority`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("blue"), capturedColor)
+		require.Equal(t, "Test Item", capturedName)
+		require.Equal(t, Priority(2), capturedPriority)
+	})
+
+	t.Run("handles word type with custom type and bool", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		exec.RegisterCustomType("Color", "string", map[string]string{
+			"red":  "red",
+			"blue": "blue",
+		})
+
+		var (
+			capturedColor   Color
+			capturedOwner   string
+			capturedVisible bool
+		)
+
+		// Pattern: {color} owned by {word} is visible {bool}
+		err := exec.RegisterStep(
+			`^((?i:blue|red)) owned by (\w+) is (true|false|yes|no)$`,
+			func(ctx context.Context, color Color, owner string, visible bool) (context.Context, error) {
+				capturedColor = color
+				capturedOwner = owner
+				capturedVisible = visible
+				return ctx, nil
+			},
+		)
+		require.NoError(t, err)
+
+		doc := createDocument("RED owned by Alice is yes")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("red"), capturedColor)
+		require.Equal(t, "Alice", capturedOwner)
+		require.True(t, capturedVisible)
+
+		doc = createDocument("blue owned by Bob is false")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, Color("blue"), capturedColor)
+		require.Equal(t, "Bob", capturedOwner)
+		require.False(t, capturedVisible)
+	})
+}
+
+func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
+	// Time pattern from builtInTypes (with optional timezone)
+	timePattern := `(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?)`
+
+	t.Run("parses time to time.Time with zero date", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 14:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour())
+		require.Equal(t, 30, capturedTime.Minute())
+		require.Equal(t, 1, capturedTime.Year()) // Zero date: year 1
+	})
+
+	t.Run("parses time with seconds", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 14:30:45")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour())
+		require.Equal(t, 30, capturedTime.Minute())
+		require.Equal(t, 45, capturedTime.Second())
+	})
+
+	t.Run("parses time with AM/PM", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 2:30pm")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour()) // 2pm = 14:00
+		require.Equal(t, 30, capturedTime.Minute())
+	})
+
+	t.Run("parses time with timezone Z", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 14:30Z")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour())
+		require.Equal(t, 30, capturedTime.Minute())
+		require.Equal(t, "UTC", capturedTime.Location().String())
+	})
+
+	t.Run("parses time with timezone offset", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 14:30+05:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour())
+		require.Equal(t, 30, capturedTime.Minute())
+		_, offset := capturedTime.Zone()
+		require.Equal(t, 5*3600+30*60, offset) // +05:30 in seconds
+	})
+
+	t.Run("parses time with IANA timezone", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTime time.Time
+
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+			capturedTime = t
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("meeting at 14:30 Europe/London")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedTime.Hour())
+		require.Equal(t, 30, capturedTime.Minute())
+		require.Equal(t, "Europe/London", capturedTime.Location().String())
+	})
+}
+
+func TestStepExecutor_DateType_TimeTime(t *testing.T) {
+	// Date pattern from builtInTypes
+	datePattern := `(\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4})`
+
+	t.Run("parses ISO date to time.Time at midnight", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDate time.Time
+
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+			capturedDate = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("event on 2024-01-15")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDate.Year())
+		require.Equal(t, time.January, capturedDate.Month())
+		require.Equal(t, 15, capturedDate.Day())
+		require.Equal(t, 0, capturedDate.Hour())   // Midnight
+		require.Equal(t, 0, capturedDate.Minute()) // Midnight
+	})
+
+	t.Run("parses EU date format (DD/MM/YYYY)", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDate time.Time
+
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+			capturedDate = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("event on 15/01/2024")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDate.Year())
+		require.Equal(t, time.January, capturedDate.Month()) // EU: 15/01 = Jan 15
+		require.Equal(t, 15, capturedDate.Day())
+	})
+
+	t.Run("parses EU date format with dots (DD.MM.YYYY)", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDate time.Time
+
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+			capturedDate = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("event on 15.01.2024")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDate.Year())
+		require.Equal(t, time.January, capturedDate.Month())
+		require.Equal(t, 15, capturedDate.Day())
+	})
+
+	t.Run("parses written date format (15 Jan 2024)", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDate time.Time
+
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+			capturedDate = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("event on 15 Jan 2024")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDate.Year())
+		require.Equal(t, time.January, capturedDate.Month())
+		require.Equal(t, 15, capturedDate.Day())
+	})
+
+	t.Run("parses written date format (Jan 15, 2024)", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDate time.Time
+
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+			capturedDate = d
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("event on Jan 15, 2024")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDate.Year())
+		require.Equal(t, time.January, capturedDate.Month())
+		require.Equal(t, 15, capturedDate.Day())
+	})
+}
+
+func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
+	// DateTime pattern from builtInTypes (with optional timezone)
+	datetimePattern := `(\d{4}[-/]\d{2}[-/]\d{2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?)`
+
+	t.Run("parses ISO datetime with space", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15 14:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, time.January, capturedDT.Month())
+		require.Equal(t, 15, capturedDT.Day())
+		require.Equal(t, 14, capturedDT.Hour())
+		require.Equal(t, 30, capturedDT.Minute())
+	})
+
+	t.Run("parses ISO datetime with T separator", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15T14:30:45")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, 15, capturedDT.Day())
+		require.Equal(t, 14, capturedDT.Hour())
+		require.Equal(t, 30, capturedDT.Minute())
+		require.Equal(t, 45, capturedDT.Second())
+	})
+
+	t.Run("parses datetime with Z timezone", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15T14:30:00Z")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, 14, capturedDT.Hour())
+		require.Equal(t, "UTC", capturedDT.Location().String())
+	})
+
+	t.Run("parses datetime with offset timezone", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15T14:30:00+05:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, 14, capturedDT.Hour())
+		_, offset := capturedDT.Zone()
+		require.Equal(t, 5*3600+30*60, offset)
+	})
+
+	t.Run("parses datetime with IANA timezone", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15 14:30 Europe/London")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, 14, capturedDT.Hour())
+		require.Equal(t, "Europe/London", capturedDT.Location().String())
+	})
+
+	t.Run("parses EU datetime format", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 15/01/2024 14:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 2024, capturedDT.Year())
+		require.Equal(t, time.January, capturedDT.Month()) // EU format
+		require.Equal(t, 15, capturedDT.Day())
+		require.Equal(t, 14, capturedDT.Hour())
+	})
+
+	t.Run("parses datetime with AM/PM", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedDT time.Time
+
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+			capturedDT = dt
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("appointment at 2024-01-15 2:30pm")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 14, capturedDT.Hour()) // 2pm = 14:00
+		require.Equal(t, 30, capturedDT.Minute())
+	})
+}
+
+func TestStepExecutor_TimezoneType(t *testing.T) {
+	// Timezone pattern from builtInTypes
+	tzPattern := `(Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+)`
+
+	t.Run("parses Z as UTC", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to Z")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "UTC", capturedLoc.String())
+	})
+
+	t.Run("parses UTC", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to UTC")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "UTC", capturedLoc.String())
+	})
+
+	t.Run("parses offset +05:30", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to +05:30")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		now := time.Now().In(capturedLoc)
+		_, offset := now.Zone()
+		require.Equal(t, 5*3600+30*60, offset)
+	})
+
+	t.Run("parses offset -08:00", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to -08:00")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		now := time.Now().In(capturedLoc)
+		_, offset := now.Zone()
+		require.Equal(t, -8*3600, offset)
+	})
+
+	t.Run("parses offset without colon +0530", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to +0530")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		now := time.Now().In(capturedLoc)
+		_, offset := now.Zone()
+		require.Equal(t, 5*3600+30*60, offset)
+	})
+
+	t.Run("parses IANA timezone Europe/London", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to Europe/London")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "Europe/London", capturedLoc.String())
+	})
+
+	t.Run("parses IANA timezone America/New_York", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to America/New_York")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "America/New_York", capturedLoc.String())
+	})
+
+	t.Run("parses IANA timezone Asia/Tokyo", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedLoc *time.Location
+
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+			capturedLoc = loc
+			return ctx, nil
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("convert to Asia/Tokyo")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "Asia/Tokyo", capturedLoc.String())
 	})
 }
 

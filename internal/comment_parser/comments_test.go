@@ -85,6 +85,21 @@ func TestGetComments(t *testing.T) {
 		require.Equal(t, `^my name is (\w+)$`, stepMap["NameIs"])
 		require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
 		require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+
+		// Mixed type step definitions - verify they contain expected patterns
+		// WantColoredVehicle: {color} (car|bike) {int} {float}
+		require.Contains(t, stepMap["WantColoredVehicle"], "(car|bike)")
+		require.Contains(t, stepMap["WantColoredVehicle"], "(?i:")          // case-insensitive color
+		require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d+)`)       // int
+		require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d*\.?\d+)`) // float
+
+		// NamedItemWithPriority: {color} {string} {priority}
+		require.Contains(t, stepMap["NamedItemWithPriority"], "(?i:")
+		require.Contains(t, stepMap["NamedItemWithPriority"], `"([^"]*)"`) // string
+
+		// SizedItemCount: {int} {size} {color}
+		require.Contains(t, stepMap["SizedItemCount"], `(-?\d+)`)
+		require.Contains(t, stepMap["SizedItemCount"], "(?i:") // size and color are case-insensitive
 	})
 }
 
@@ -239,6 +254,63 @@ func TestTransformStepPattern(t *testing.T) {
 		require.Equal(t, `^I see (.*)$`, result)
 	})
 
+	t.Run("transforms {time} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^the meeting is at {time}$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, `\d{1,2}:\d{2}`)
+	})
+
+	t.Run("transforms {date} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^the event is on {date}$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, `\d{4}[-/]\d{2}[-/]\d{2}`)
+	})
+
+	t.Run("transforms {datetime} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^the appointment is at {datetime}$", customTypes)
+		require.Nil(t, err)
+		require.Contains(t, result, `\d{4}[-/]\d{2}[-/]\d{2}`)
+		require.Contains(t, result, `\d{1,2}:\d{2}`)
+	})
+
+	t.Run("transforms {timezone} to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^convert to {timezone}$", customTypes)
+		require.Nil(t, err)
+		// Should contain patterns for Z, UTC, offset, and IANA names
+		require.Contains(t, result, "Z")
+		require.Contains(t, result, "UTC")
+		require.Contains(t, result, `[+-]\d{2}`)
+		require.Contains(t, result, `[A-Za-z_]+/[A-Za-z_]+`)
+	})
+
+	t.Run("time pattern includes optional timezone", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^meeting at {time}$", customTypes)
+		require.Nil(t, err)
+		// Should contain timezone patterns as optional
+		require.Contains(t, result, "Z|UTC")
+		require.Contains(t, result, `[A-Za-z_]+/[A-Za-z_]+`)
+	})
+
+	t.Run("datetime pattern includes optional timezone", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		result, err := transformStepPattern("^appointment at {datetime}$", customTypes)
+		require.Nil(t, err)
+		// Should contain timezone patterns as optional
+		require.Contains(t, result, "Z|UTC")
+		require.Contains(t, result, `[A-Za-z_]+/[A-Za-z_]+`)
+	})
+
 	t.Run("handles mixed built-in and custom types", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{
 			"color": {
@@ -252,5 +324,53 @@ func TestTransformStepPattern(t *testing.T) {
 		require.Nil(t, err)
 		require.Contains(t, result, `(-?\d+)`)
 		require.Contains(t, result, "red")
+	})
+
+	t.Run("handles complex pattern with custom type, built-in types, and regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red", "Blue": "blue", "Green": "green"},
+			},
+			"priority": {
+				Name:       "Priority",
+				Underlying: "int",
+				Values:     map[string]string{"Low": "1", "Medium": "2", "High": "3"},
+			},
+		}
+
+		// Pattern: custom type + word + int + float + string + another custom type
+		result, err := transformStepPattern(
+			"^I want a {color} (car|bike) with {int} doors costing {float} dollars named {string} at {priority} priority$",
+			customTypes,
+		)
+		require.Nil(t, err)
+
+		// Verify custom type {color} is transformed with case-insensitive matching
+		require.Contains(t, result, "(?i:")
+		require.Contains(t, result, "red")
+		require.Contains(t, result, "blue")
+		require.Contains(t, result, "green")
+
+		// Verify normal regex (car|bike) is preserved
+		require.Contains(t, result, "(car|bike)")
+
+		// Verify built-in {int} is transformed
+		require.Contains(t, result, `(-?\d+)`)
+
+		// Verify built-in {float} is transformed
+		require.Contains(t, result, `(-?\d*\.?\d+)`)
+
+		// Verify built-in {string} is transformed
+		require.Contains(t, result, `"([^"]*)"`)
+
+		// Verify custom type {priority} is transformed
+		require.Contains(t, result, "low")
+		require.Contains(t, result, "medium")
+		require.Contains(t, result, "high")
+		require.Contains(t, result, "1")
+		require.Contains(t, result, "2")
+		require.Contains(t, result, "3")
 	})
 }

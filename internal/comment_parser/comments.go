@@ -315,6 +315,26 @@ var builtInTypes = map[string]string{
 	"string": `"([^"]*)"`,     // Matches double-quoted strings (captures content without quotes)
 	"":       `(.*)`,          // Empty name matches anything
 	"any":    `(.*)`,          // Explicit any matches anything
+
+	// Timezone formats:
+	// - Z (UTC)
+	// - Offset: +05:30, -08:00, +0530, -0800
+	// - IANA names: Europe/London, America/New_York, UTC
+	"timezone": `(Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+)`,
+
+	// Time formats: HH:MM, HH:MM:SS, HH:MM:SS.mmm, with optional AM/PM and optional timezone
+	// Examples: 14:30, 2:30pm, 14:30:45, 09:15:30.123, 14:30+05:30, 2:30pm Europe/London
+	"time": `(\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?)`,
+
+	// Date formats (EU default: DD/MM/YYYY):
+	// ISO: 2024-01-15, 2024/01/15
+	// EU: 15/01/2024, 15-01-2024, 15.01.2024
+	// Written: Jan 15, 2024 / January 15, 2024 / 15 Jan 2024
+	"date": `(\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}|(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4})`,
+
+	// DateTime formats: combines date and time with separator (space, T, or @), with optional timezone
+	// Examples: 2024-01-15 14:30:00, 2024-01-15T14:30:00Z, 15/01/2024 2:30pm Europe/London
+	"datetime": `(\d{4}[-/]\d{2}[-/]\d{2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:\.\d{1,3})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}\s+\d{1,2}:\d{2}(?::\d{2})?(?:\s*[AaPp][Mm])?(?:\s*(?:Z|UTC|[+-]\d{2}:?\d{2}|[A-Za-z_]+/[A-Za-z_]+))?)`,
 }
 
 // transformStepPattern replaces {typename} placeholders with regex patterns

@@ -7,8 +7,55 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	messages "github.com/cucumber/messages/go/v21"
+)
+
+// Time/Date parsing layouts (EU format default: DD/MM/YYYY)
+var (
+	// Time layouts (without timezone, timezone handled separately)
+	timeLayouts = []string{
+		"15:04:05.000",
+		"15:04:05",
+		"15:04",
+		"3:04:05.000pm",
+		"3:04:05.000PM",
+		"3:04:05pm",
+		"3:04:05PM",
+		"3:04:05 pm",
+		"3:04:05 PM",
+		"3:04pm",
+		"3:04PM",
+		"3:04 pm",
+		"3:04 PM",
+	}
+
+	// Date layouts (EU format prioritized: DD/MM/YYYY)
+	dateLayouts = []string{
+		// EU formats (DD/MM/YYYY) - prioritized
+		"02/01/2006",
+		"02-01-2006",
+		"02.01.2006",
+		"2/1/2006",
+		"2-1-2006",
+		"2.1.2006",
+		// ISO formats (YYYY-MM-DD)
+		"2006-01-02",
+		"2006/01/02",
+		// Written formats
+		"2 Jan 2006",
+		"2 January 2006",
+		"02 Jan 2006",
+		"02 January 2006",
+		"Jan 2, 2006",
+		"January 2, 2006",
+		"Jan 02, 2006",
+		"January 02, 2006",
+	}
+
+	// Timezone offset pattern
+	tzOffsetRegex = regexp.MustCompile(`^([+-])(\d{2}):?(\d{2})$`)
 )
 
 // StepDefinition holds a compiled regex pattern and its associated function
@@ -270,6 +317,30 @@ func (e *StepExecutor) convertArg(arg string, targetType reflect.Type) (reflect.
 	typeName := targetType.Name()
 	kindName := targetType.Kind().String()
 
+	// Check for time.Time
+	if targetType == reflect.TypeOf(time.Time{}) {
+		// Try parsing as datetime first, then date, then time
+		if dt, err := parseDateTime(arg); err == nil {
+			return reflect.ValueOf(dt), nil
+		}
+		if d, err := parseDate(arg); err == nil {
+			return reflect.ValueOf(d), nil
+		}
+		if t, err := parseTime(arg); err == nil {
+			return reflect.ValueOf(t), nil
+		}
+		return reflect.Value{}, fmt.Errorf("cannot parse %q as time.Time", arg)
+	}
+
+	// Check for *time.Location
+	if targetType == reflect.TypeOf((*time.Location)(nil)) {
+		loc, err := parseTimezone(arg)
+		if err != nil {
+			return reflect.Value{}, err
+		}
+		return reflect.ValueOf(loc), nil
+	}
+
 	// Check if this is a custom type (named type that differs from its kind)
 	if typeName != "" && typeName != kindName {
 		return e.convertCustomType(arg, targetType, typeName)
@@ -468,4 +539,201 @@ func (e *StepExecutor) GetContext() context.Context {
 // SetContext sets the execution context
 func (e *StepExecutor) SetContext(ctx context.Context) {
 	e.context = ctx
+}
+
+// =============================================================================
+// Time, Date, DateTime, and Timezone Parsing
+// =============================================================================
+
+// parseTimezone parses a timezone string and returns a *time.Location.
+// Supports: Z, UTC, +05:30, -08:00, +0530, Europe/London, America/New_York
+func parseTimezone(s string) (*time.Location, error) {
+	s = strings.TrimSpace(s)
+
+	// Handle Z and UTC
+	if s == "Z" || s == "UTC" {
+		return time.UTC, nil
+	}
+
+	// Handle offset format: +05:30, -08:00, +0530, -0800
+	if matches := tzOffsetRegex.FindStringSubmatch(s); matches != nil {
+		sign := 1
+		if matches[1] == "-" {
+			sign = -1
+		}
+		hours, _ := strconv.Atoi(matches[2])
+		minutes, _ := strconv.Atoi(matches[3])
+		offsetSeconds := sign * (hours*3600 + minutes*60)
+		return time.FixedZone(s, offsetSeconds), nil
+	}
+
+	// Handle IANA timezone names: Europe/London, America/New_York
+	loc, err := time.LoadLocation(s)
+	if err != nil {
+		return nil, fmt.Errorf("unknown timezone %q: %w", s, err)
+	}
+	return loc, nil
+}
+
+// extractTimezone extracts timezone suffix from a time/datetime string.
+// Returns the string without timezone and the parsed location.
+func extractTimezone(s string) (string, *time.Location) {
+	s = strings.TrimSpace(s)
+
+	// Check for Z suffix
+	if strings.HasSuffix(s, "Z") {
+		return strings.TrimSuffix(s, "Z"), time.UTC
+	}
+
+	// Check for UTC suffix
+	if strings.HasSuffix(s, " UTC") || strings.HasSuffix(s, "UTC") {
+		return strings.TrimSuffix(strings.TrimSuffix(s, " UTC"), "UTC"), time.UTC
+	}
+
+	// Check for IANA timezone (contains /)
+	parts := strings.Split(s, " ")
+	if len(parts) >= 2 {
+		lastPart := parts[len(parts)-1]
+		if strings.Contains(lastPart, "/") {
+			loc, err := time.LoadLocation(lastPart)
+			if err == nil {
+				return strings.TrimSuffix(s, " "+lastPart), loc
+			}
+		}
+	}
+
+	// Check for offset at the end: +05:30, -08:00, +0530, -0800
+	// Pattern: last part starts with + or -
+	if len(parts) >= 1 {
+		lastPart := parts[len(parts)-1]
+		if len(lastPart) >= 5 && (lastPart[0] == '+' || lastPart[0] == '-') {
+			loc, err := parseTimezone(lastPart)
+			if err == nil {
+				withoutTz := strings.TrimSuffix(s, lastPart)
+				withoutTz = strings.TrimSuffix(withoutTz, " ")
+				return withoutTz, loc
+			}
+		}
+	}
+
+	// Check for offset directly attached (no space): 14:30+05:30
+	for i := len(s) - 1; i >= 0; i-- {
+		if s[i] == '+' || s[i] == '-' {
+			possibleTz := s[i:]
+			loc, err := parseTimezone(possibleTz)
+			if err == nil {
+				return s[:i], loc
+			}
+			break
+		}
+	}
+
+	// No timezone found, use Local
+	return s, time.Local
+}
+
+// parseTime parses a time string and returns time.Time with zero date (0001-01-01).
+// Supports: 14:30, 2:30pm, 14:30:45.123, 14:30+05:30, 2:30pm Europe/London
+func parseTime(s string) (time.Time, error) {
+	// Extract timezone
+	timeStr, loc := extractTimezone(s)
+	timeStr = strings.TrimSpace(timeStr)
+
+	// Try each time layout
+	for _, layout := range timeLayouts {
+		t, err := time.ParseInLocation(layout, timeStr, loc)
+		if err == nil {
+			// Return with zero date (0001-01-01)
+			return time.Date(1, 1, 1, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), loc), nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("cannot parse %q as time", s)
+}
+
+// parseDate parses a date string and returns time.Time at midnight (00:00:00) in Local timezone.
+// Supports EU format (DD/MM/YYYY) by default, plus ISO and written formats.
+func parseDate(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+
+	// Try each date layout
+	for _, layout := range dateLayouts {
+		t, err := time.ParseInLocation(layout, s, time.Local)
+		if err == nil {
+			// Return at midnight
+			return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local), nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("cannot parse %q as date", s)
+}
+
+// parseDateTime parses a datetime string and returns time.Time with optional timezone.
+// Supports: 2024-01-15 14:30:00, 2024-01-15T14:30:00Z, 15/01/2024 2:30pm Europe/London
+func parseDateTime(s string) (time.Time, error) {
+	// Extract timezone
+	dtStr, loc := extractTimezone(s)
+	dtStr = strings.TrimSpace(dtStr)
+
+	// Try to split by T or space to separate date and time
+	var datePart, timePart string
+
+	if idx := strings.Index(dtStr, "T"); idx != -1 {
+		datePart = dtStr[:idx]
+		timePart = dtStr[idx+1:]
+	} else if idx := strings.LastIndex(dtStr, " "); idx != -1 {
+		// Find the space that separates date and time
+		// Date could be "15/01/2024" or "15 Jan 2024"
+		// We need to find the space before time (which contains :)
+		for i := len(dtStr) - 1; i >= 0; i-- {
+			if dtStr[i] == ' ' {
+				possibleTime := dtStr[i+1:]
+				if strings.Contains(possibleTime, ":") {
+					datePart = dtStr[:i]
+					timePart = possibleTime
+					break
+				}
+			}
+		}
+		if datePart == "" {
+			// Fallback: last space
+			datePart = dtStr[:idx]
+			timePart = dtStr[idx+1:]
+		}
+	} else {
+		return time.Time{}, fmt.Errorf("cannot parse %q as datetime: no separator found", s)
+	}
+
+	// Parse date part
+	var parsedDate time.Time
+	var dateErr error
+	for _, layout := range dateLayouts {
+		parsedDate, dateErr = time.ParseInLocation(layout, datePart, loc)
+		if dateErr == nil {
+			break
+		}
+	}
+	if dateErr != nil {
+		return time.Time{}, fmt.Errorf("cannot parse date part %q: %w", datePart, dateErr)
+	}
+
+	// Parse time part
+	var parsedTime time.Time
+	var timeErr error
+	for _, layout := range timeLayouts {
+		parsedTime, timeErr = time.ParseInLocation(layout, timePart, loc)
+		if timeErr == nil {
+			break
+		}
+	}
+	if timeErr != nil {
+		return time.Time{}, fmt.Errorf("cannot parse time part %q: %w", timePart, timeErr)
+	}
+
+	// Combine date and time
+	return time.Date(
+		parsedDate.Year(), parsedDate.Month(), parsedDate.Day(),
+		parsedTime.Hour(), parsedTime.Minute(), parsedTime.Second(), parsedTime.Nanosecond(),
+		loc,
+	), nil
 }
