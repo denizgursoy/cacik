@@ -1,14 +1,11 @@
 package step_int
 
 import (
-	"context"
-	"fmt"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // IGetApples
 // @cacik `^I have (\d+) apples$`
-func IGetApples(ctx context.Context, appleCount int) (context.Context, error) {
-	fmt.Printf("I have %d apples", appleCount)
-
-	return ctx, nil
+func IGetApples(ctx *cacik.Context, appleCount int) {
+	ctx.Logger().Info("I have apples", "count", appleCount)
 }

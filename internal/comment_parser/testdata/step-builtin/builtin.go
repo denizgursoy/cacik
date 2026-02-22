@@ -1,41 +1,35 @@
 package step_builtin
 
 import (
-	"context"
-	"fmt"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // HaveApples uses built-in {int} type
 // @cacik `^I have {int} apples$`
-func HaveApples(ctx context.Context, count int) (context.Context, error) {
-	fmt.Printf("I have %d apples\n", count)
-	return ctx, nil
+func HaveApples(ctx *cacik.Context, count int) {
+	ctx.Logger().Info("I have apples", "count", count)
 }
 
 // PriceIs uses built-in {float} type
 // @cacik `^the price is {float}$`
-func PriceIs(ctx context.Context, price float64) (context.Context, error) {
-	fmt.Printf("The price is %.2f\n", price)
-	return ctx, nil
+func PriceIs(ctx *cacik.Context, price float64) {
+	ctx.Logger().Info("price is", "price", price)
 }
 
 // NameIs uses built-in {word} type
 // @cacik `^my name is {word}$`
-func NameIs(ctx context.Context, name string) (context.Context, error) {
-	fmt.Printf("My name is %s\n", name)
-	return ctx, nil
+func NameIs(ctx *cacik.Context, name string) {
+	ctx.Logger().Info("my name is", "name", name)
 }
 
 // Say uses built-in {string} type (quoted string)
 // @cacik `^I say {string}$`
-func Say(ctx context.Context, message string) (context.Context, error) {
-	fmt.Printf("I say: %s\n", message)
-	return ctx, nil
+func Say(ctx *cacik.Context, message string) {
+	ctx.Logger().Info("I say", "message", message)
 }
 
 // SeeAnything uses built-in {any} type
 // @cacik `^I see {any}$`
-func SeeAnything(ctx context.Context, thing string) (context.Context, error) {
-	fmt.Printf("I see: %s\n", thing)
-	return ctx, nil
+func SeeAnything(ctx *cacik.Context, thing string) {
+	ctx.Logger().Info("I see", "thing", thing)
 }

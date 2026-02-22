@@ -1,22 +1,21 @@
 package executor
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"testing"
 	"time"
 
 	messages "github.com/cucumber/messages/go/v21"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 	"github.com/stretchr/testify/require"
 )
 
 func TestStepExecutor_RegisterStep(t *testing.T) {
 	t.Run("registers valid step", func(t *testing.T) {
 		exec := NewStepExecutor()
-		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx context.Context, count int) (context.Context, error) {
-			return ctx, nil
+		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx *cacik.Context, count int) {
+
 		})
 		require.NoError(t, err)
 	})
@@ -51,9 +50,9 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedCount int
 
-		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx context.Context, count int) (context.Context, error) {
+		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx *cacik.Context, count int) {
 			capturedCount = count
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -68,9 +67,9 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedName string
 
-		err := exec.RegisterStep("^my name is (.+)$", func(ctx context.Context, name string) (context.Context, error) {
+		err := exec.RegisterStep("^my name is (.+)$", func(ctx *cacik.Context, name string) {
 			capturedName = name
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -84,9 +83,9 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedPrice float64
 
-		err := exec.RegisterStep("^the price is ([\\d.]+)$", func(ctx context.Context, price float64) (context.Context, error) {
+		err := exec.RegisterStep("^the price is ([\\d.]+)$", func(ctx *cacik.Context, price float64) {
 			capturedPrice = price
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -101,10 +100,10 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		var capturedCount int
 		var capturedItem string
 
-		err := exec.RegisterStep("^I have (\\d+) (\\w+)$", func(ctx context.Context, count int, item string) (context.Context, error) {
+		err := exec.RegisterStep("^I have (\\d+) (\\w+)$", func(ctx *cacik.Context, count int, item string) {
 			capturedCount = count
 			capturedItem = item
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -132,18 +131,16 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 
 	t.Run("propagates context between steps", func(t *testing.T) {
 		exec := NewStepExecutor()
-		type ctxKey string
-		key := ctxKey("value")
+		err := exec.RegisterStep("^I set value to (\\d+)$", func(ctx *cacik.Context, val int) {
+			ctx.Data().Set("value", val)
 
-		err := exec.RegisterStep("^I set value to (\\d+)$", func(ctx context.Context, val int) (context.Context, error) {
-			return context.WithValue(ctx, key, val), nil
 		})
 		require.NoError(t, err)
 
 		var capturedVal int
-		err = exec.RegisterStep("^I read the value$", func(ctx context.Context) (context.Context, error) {
-			capturedVal = ctx.Value(key).(int)
-			return ctx, nil
+		err = exec.RegisterStep("^I read the value$", func(ctx *cacik.Context) {
+			capturedVal = ctx.Data().MustGet("value").(int)
+
 		})
 		require.NoError(t, err)
 
@@ -153,19 +150,18 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		require.Equal(t, 42, capturedVal)
 	})
 
-	t.Run("returns error when step function returns error", func(t *testing.T) {
+	t.Run("panics when step function assertion fails", func(t *testing.T) {
 		exec := NewStepExecutor()
-		expectedErr := errors.New("step failed")
 
-		err := exec.RegisterStep("^failing step$", func(ctx context.Context) (context.Context, error) {
-			return ctx, expectedErr
+		err := exec.RegisterStep("^failing step$", func(ctx *cacik.Context) {
+			ctx.Assert().Fail("step failed")
 		})
 		require.NoError(t, err)
 
 		doc := createDocument("failing step")
-		err = exec.Execute(doc)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "step failed")
+		require.Panics(t, func() {
+			exec.Execute(doc)
+		})
 	})
 
 	t.Run("returns error for unmatched step", func(t *testing.T) {
@@ -182,8 +178,8 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 	t.Run("returns error for type conversion failure", func(t *testing.T) {
 		exec := NewStepExecutor()
 
-		err := exec.RegisterStep("^I have (\\w+) apples$", func(ctx context.Context, count int) (context.Context, error) {
-			return ctx, nil
+		err := exec.RegisterStep("^I have (\\w+) apples$", func(ctx *cacik.Context, count int) {
+
 		})
 		require.NoError(t, err)
 
@@ -258,9 +254,9 @@ func TestStepExecutor_BoolArgument(t *testing.T) {
 			exec := NewStepExecutor()
 			var capturedValue bool
 
-			err := exec.RegisterStep("^it is (.+)$", func(ctx context.Context, value bool) (context.Context, error) {
+			err := exec.RegisterStep("^it is (.+)$", func(ctx *cacik.Context, value bool) {
 				capturedValue = value
-				return ctx, nil
+
 			})
 			require.NoError(t, err)
 
@@ -274,8 +270,8 @@ func TestStepExecutor_BoolArgument(t *testing.T) {
 	t.Run("returns error for invalid bool value", func(t *testing.T) {
 		exec := NewStepExecutor()
 
-		err := exec.RegisterStep("^it is (.+)$", func(ctx context.Context, value bool) (context.Context, error) {
-			return ctx, nil
+		err := exec.RegisterStep("^it is (.+)$", func(ctx *cacik.Context, value bool) {
+
 		})
 		require.NoError(t, err)
 
@@ -291,9 +287,9 @@ func TestStepExecutor_FeatureToggle(t *testing.T) {
 		exec := NewStepExecutor()
 		var featureEnabled bool
 
-		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx context.Context, enabled bool) (context.Context, error) {
+		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx *cacik.Context, enabled bool) {
 			featureEnabled = enabled
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -307,9 +303,9 @@ func TestStepExecutor_FeatureToggle(t *testing.T) {
 		exec := NewStepExecutor()
 		var featureEnabled bool
 
-		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx context.Context, enabled bool) (context.Context, error) {
+		err := exec.RegisterStep("^the feature is (enabled|disabled)$", func(ctx *cacik.Context, enabled bool) {
 			featureEnabled = enabled
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -336,9 +332,9 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 
 		var capturedColor Color
 
-		err := exec.RegisterStep("^I select (red|blue|green)$", func(ctx context.Context, c Color) (context.Context, error) {
+		err := exec.RegisterStep("^I select (red|blue|green)$", func(ctx *cacik.Context, c Color) {
 			capturedColor = c
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -359,9 +355,9 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 
 		var capturedColor Color
 
-		err := exec.RegisterStep("^I select (red|blue|RED|BLUE)$", func(ctx context.Context, c Color) (context.Context, error) {
+		err := exec.RegisterStep("^I select (red|blue|RED|BLUE)$", func(ctx *cacik.Context, c Color) {
 			capturedColor = c
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -383,9 +379,9 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 		var capturedColor Color
 
 		// Use (?i:...) for case-insensitive matching - this is what the generator produces
-		err := exec.RegisterStep("^I select ((?i:red|blue))$", func(ctx context.Context, c Color) (context.Context, error) {
+		err := exec.RegisterStep("^I select ((?i:red|blue))$", func(ctx *cacik.Context, c Color) {
 			capturedColor = c
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -418,8 +414,8 @@ func TestStepExecutor_CustomStringType(t *testing.T) {
 			"blue": "blue",
 		})
 
-		err := exec.RegisterStep("^I select (\\w+)$", func(ctx context.Context, c Color) (context.Context, error) {
-			return ctx, nil
+		err := exec.RegisterStep("^I select (\\w+)$", func(ctx *cacik.Context, c Color) {
+
 		})
 		require.NoError(t, err)
 
@@ -450,9 +446,9 @@ func TestStepExecutor_CustomIntType(t *testing.T) {
 
 		var capturedPriority Priority
 
-		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx context.Context, p Priority) (context.Context, error) {
+		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx *cacik.Context, p Priority) {
 			capturedPriority = p
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -477,9 +473,9 @@ func TestStepExecutor_CustomIntType(t *testing.T) {
 
 		var capturedPriority Priority
 
-		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx context.Context, p Priority) (context.Context, error) {
+		err := exec.RegisterStep("^priority is (low|medium|high|1|2|3)$", func(ctx *cacik.Context, p Priority) {
 			capturedPriority = p
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -498,9 +494,9 @@ func TestStepExecutor_CustomTypeWithoutRegistration(t *testing.T) {
 		// Don't register the custom type - it should still convert
 		var capturedColor Color
 
-		err := exec.RegisterStep("^I select (\\w+)$", func(ctx context.Context, c Color) (context.Context, error) {
+		err := exec.RegisterStep("^I select (\\w+)$", func(ctx *cacik.Context, c Color) {
 			capturedColor = c
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -533,12 +529,12 @@ func TestStepExecutor_MixedTypes(t *testing.T) {
 		// This simulates: ^I want a {color} (car|bike) with {int} doors costing {float} dollars$
 		err := exec.RegisterStep(
 			`^I want a ((?i:blue|green|red)) (car|bike) with (-?\d+) doors costing (-?\d*\.?\d+) dollars$`,
-			func(ctx context.Context, color Color, vehicle string, doors int, price float64) (context.Context, error) {
+			func(ctx *cacik.Context, color Color, vehicle string, doors int, price float64) {
 				capturedColor = color
 				capturedVehicle = vehicle
 				capturedDoors = doors
 				capturedPrice = price
-				return ctx, nil
+
 			},
 		)
 		require.NoError(t, err)
@@ -599,11 +595,11 @@ func TestStepExecutor_MixedTypes(t *testing.T) {
 		// Pattern: {color} item named {string} at {priority} priority
 		err := exec.RegisterStep(
 			`^a ((?i:blue|red)) item named "([^"]*)" at ((?i:1|2|3|high|low|medium)) priority$`,
-			func(ctx context.Context, color Color, name string, priority Priority) (context.Context, error) {
+			func(ctx *cacik.Context, color Color, name string, priority Priority) {
 				capturedColor = color
 				capturedName = name
 				capturedPriority = priority
-				return ctx, nil
+
 			},
 		)
 		require.NoError(t, err)
@@ -650,11 +646,11 @@ func TestStepExecutor_MixedTypes(t *testing.T) {
 		// Pattern: {color} owned by {word} is visible {bool}
 		err := exec.RegisterStep(
 			`^((?i:blue|red)) owned by (\w+) is (true|false|yes|no)$`,
-			func(ctx context.Context, color Color, owner string, visible bool) (context.Context, error) {
+			func(ctx *cacik.Context, color Color, owner string, visible bool) {
 				capturedColor = color
 				capturedOwner = owner
 				capturedVisible = visible
-				return ctx, nil
+
 			},
 		)
 		require.NoError(t, err)
@@ -683,9 +679,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -701,9 +697,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -719,9 +715,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -736,9 +732,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -754,9 +750,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -773,9 +769,9 @@ func TestStepExecutor_TimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedTime time.Time
 
-		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx context.Context, t time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^meeting at "+timePattern+"$", func(ctx *cacik.Context, t time.Time) {
 			capturedTime = t
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -796,9 +792,9 @@ func TestStepExecutor_DateType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDate time.Time
 
-		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx *cacik.Context, d time.Time) {
 			capturedDate = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -816,9 +812,9 @@ func TestStepExecutor_DateType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDate time.Time
 
-		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx *cacik.Context, d time.Time) {
 			capturedDate = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -834,9 +830,9 @@ func TestStepExecutor_DateType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDate time.Time
 
-		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx *cacik.Context, d time.Time) {
 			capturedDate = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -852,9 +848,9 @@ func TestStepExecutor_DateType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDate time.Time
 
-		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx *cacik.Context, d time.Time) {
 			capturedDate = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -870,9 +866,9 @@ func TestStepExecutor_DateType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDate time.Time
 
-		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx context.Context, d time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^event on "+datePattern+"$", func(ctx *cacik.Context, d time.Time) {
 			capturedDate = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -893,9 +889,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -913,9 +909,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -933,9 +929,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -951,9 +947,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -970,9 +966,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -988,9 +984,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1007,9 +1003,9 @@ func TestStepExecutor_DateTimeType_TimeTime(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDT time.Time
 
-		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx context.Context, dt time.Time) (context.Context, error) {
+		err := exec.RegisterStep("^appointment at "+datetimePattern+"$", func(ctx *cacik.Context, dt time.Time) {
 			capturedDT = dt
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1029,9 +1025,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1045,9 +1041,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1061,9 +1057,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1079,9 +1075,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1097,9 +1093,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1115,9 +1111,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1131,9 +1127,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1147,9 +1143,9 @@ func TestStepExecutor_TimezoneType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedLoc *time.Location
 
-		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx context.Context, loc *time.Location) (context.Context, error) {
+		err := exec.RegisterStep("^convert to "+tzPattern+"$", func(ctx *cacik.Context, loc *time.Location) {
 			capturedLoc = loc
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1218,9 +1214,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1234,9 +1230,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1250,9 +1246,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1266,9 +1262,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1282,9 +1278,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1298,9 +1294,9 @@ func TestStepExecutor_DurationType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedDuration time.Duration
 
-		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx context.Context, d time.Duration) (context.Context, error) {
+		err := exec.RegisterStep("^wait for "+durationPattern+"$", func(ctx *cacik.Context, d time.Duration) {
 			capturedDuration = d
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1319,9 +1315,9 @@ func TestStepExecutor_URLType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedURL *url.URL
 
-		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx *cacik.Context, u *url.URL) {
 			capturedURL = u
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1336,9 +1332,9 @@ func TestStepExecutor_URLType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedURL *url.URL
 
-		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx *cacik.Context, u *url.URL) {
 			capturedURL = u
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1354,9 +1350,9 @@ func TestStepExecutor_URLType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedURL *url.URL
 
-		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx *cacik.Context, u *url.URL) {
 			capturedURL = u
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1372,9 +1368,9 @@ func TestStepExecutor_URLType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedURL *url.URL
 
-		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx *cacik.Context, u *url.URL) {
 			capturedURL = u
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1389,9 +1385,9 @@ func TestStepExecutor_URLType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedURL *url.URL
 
-		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx context.Context, u *url.URL) (context.Context, error) {
+		err := exec.RegisterStep("^navigate to "+urlPattern+"$", func(ctx *cacik.Context, u *url.URL) {
 			capturedURL = u
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1411,9 +1407,9 @@ func TestStepExecutor_EmailType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedEmail string
 
-		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx *cacik.Context, email string) {
 			capturedEmail = email
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1427,9 +1423,9 @@ func TestStepExecutor_EmailType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedEmail string
 
-		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx *cacik.Context, email string) {
 			capturedEmail = email
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1443,9 +1439,9 @@ func TestStepExecutor_EmailType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedEmail string
 
-		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx *cacik.Context, email string) {
 			capturedEmail = email
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1459,9 +1455,9 @@ func TestStepExecutor_EmailType(t *testing.T) {
 		exec := NewStepExecutor()
 		var capturedEmail string
 
-		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx context.Context, email string) (context.Context, error) {
+		err := exec.RegisterStep("^user "+emailPattern+" logged in$", func(ctx *cacik.Context, email string) {
 			capturedEmail = email
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1481,9 +1477,9 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executed := false
 
-		err := exec.RegisterStep("^rule scenario step$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^rule scenario step$", func(ctx *cacik.Context) {
 			executed = true
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1497,9 +1493,9 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+		err := exec.RegisterStep("^scenario (\\d+) step$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1517,15 +1513,15 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^rule background step$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^rule background step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "rule-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1543,15 +1539,15 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^feature background step$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^feature background step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "feature-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^rule scenario step$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^rule scenario step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "rule-scenario")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1568,21 +1564,21 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^feature background step$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^feature background step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "feature-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^rule background step$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^rule background step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "rule-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^scenario step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "scenario")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1600,9 +1596,9 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^rule (\\d+) scenario step$", func(ctx context.Context, num int) (context.Context, error) {
+		err := exec.RegisterStep("^rule (\\d+) scenario step$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("rule-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1619,21 +1615,21 @@ func TestStepExecutor_Execute_Rule(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^feature bg$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^feature bg$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "feature-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^rule bg$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^rule bg$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "rule-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario (\\d+)$", func(ctx context.Context, num int) (context.Context, error) {
+		err = exec.RegisterStep("^scenario (\\d+)$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1656,15 +1652,15 @@ func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^background step$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^background step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx context.Context, num int) (context.Context, error) {
+		err = exec.RegisterStep("^scenario (\\d+) step$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("scenario-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1685,21 +1681,21 @@ func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
 		exec := NewStepExecutor()
 		scenarioExecuted := false
 
-		err := exec.RegisterStep("^failing background step$", func(ctx context.Context) (context.Context, error) {
-			return ctx, errors.New("background failed")
+		err := exec.RegisterStep("^failing background step$", func(ctx *cacik.Context) {
+			ctx.Assert().Fail("background failed")
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^scenario step$", func(ctx *cacik.Context) {
 			scenarioExecuted = true
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
 		doc := createDocumentWithBackground("failing background step", "scenario step")
-		err = exec.Execute(doc)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "background failed")
+		require.Panics(t, func() {
+			exec.Execute(doc)
+		})
 		require.False(t, scenarioExecuted)
 	})
 
@@ -1708,15 +1704,15 @@ func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
 		var capturedCount int
 		var capturedName string
 
-		err := exec.RegisterStep("^I have (\\d+) items$", func(ctx context.Context, count int) (context.Context, error) {
+		err := exec.RegisterStep("^I have (\\d+) items$", func(ctx *cacik.Context, count int) {
 			capturedCount = count
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^my name is (\\w+)$", func(ctx context.Context, name string) (context.Context, error) {
+		err = exec.RegisterStep("^my name is (\\w+)$", func(ctx *cacik.Context, name string) {
 			capturedName = name
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1734,15 +1730,15 @@ func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^background step (\\d+)$", func(ctx context.Context, num int) (context.Context, error) {
+		err := exec.RegisterStep("^background step (\\d+)$", func(ctx *cacik.Context, num int) {
 			executionOrder = append(executionOrder, fmt.Sprintf("bg-%d", num))
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^scenario step$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^scenario step$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "scenario")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1761,21 +1757,21 @@ func TestStepExecutor_Execute_ComplexFeatureStructure(t *testing.T) {
 		exec := NewStepExecutor()
 		executionOrder := []string{}
 
-		err := exec.RegisterStep("^feature bg$", func(ctx context.Context) (context.Context, error) {
+		err := exec.RegisterStep("^feature bg$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "feature-bg")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^standalone scenario$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^standalone scenario$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "standalone")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
-		err = exec.RegisterStep("^rule scenario$", func(ctx context.Context) (context.Context, error) {
+		err = exec.RegisterStep("^rule scenario$", func(ctx *cacik.Context) {
 			executionOrder = append(executionOrder, "rule-scenario")
-			return ctx, nil
+
 		})
 		require.NoError(t, err)
 
@@ -1795,18 +1791,16 @@ func TestStepExecutor_Execute_ComplexFeatureStructure(t *testing.T) {
 	t.Run("context is preserved across background and scenario steps", func(t *testing.T) {
 		exec := NewStepExecutor()
 
-		type ctxKey string
-		const valueKey ctxKey = "value"
+		err := exec.RegisterStep("^I set value to (\\d+)$", func(ctx *cacik.Context, val int) {
+			ctx.Data().Set("value", val)
 
-		err := exec.RegisterStep("^I set value to (\\d+)$", func(ctx context.Context, val int) (context.Context, error) {
-			return context.WithValue(ctx, valueKey, val), nil
 		})
 		require.NoError(t, err)
 
 		var capturedValue int
-		err = exec.RegisterStep("^the value should be (\\d+)$", func(ctx context.Context, expected int) (context.Context, error) {
-			capturedValue = ctx.Value(valueKey).(int)
-			return ctx, nil
+		err = exec.RegisterStep("^the value should be (\\d+)$", func(ctx *cacik.Context, expected int) {
+			capturedValue = ctx.Data().MustGet("value").(int)
+
 		})
 		require.NoError(t, err)
 

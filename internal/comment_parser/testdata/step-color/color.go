@@ -1,8 +1,7 @@
 package step_color
 
 import (
-	"context"
-	"fmt"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // Color represents a color choice
@@ -16,14 +15,12 @@ const (
 
 // SelectColor selects a color
 // @cacik `^I select {color}$`
-func SelectColor(ctx context.Context, c Color) (context.Context, error) {
-	fmt.Printf("Selected color: %s\n", c)
-	return ctx, nil
+func SelectColor(ctx *cacik.Context, c Color) {
+	ctx.Logger().Info("color selected", "color", c)
 }
 
 // ColorIs checks if the color matches
 // @cacik `^the color is {color}$`
-func ColorIs(ctx context.Context, c Color) (context.Context, error) {
-	fmt.Printf("The color is: %s\n", c)
-	return ctx, nil
+func ColorIs(ctx *cacik.Context, c Color) {
+	ctx.Logger().Info("color is", "color", c)
 }

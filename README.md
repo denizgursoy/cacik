@@ -25,17 +25,12 @@ steps.go
 ```go
 package main
 
-import (
-	"context"
-	"fmt"
-)
+import "github.com/denizgursoy/cacik/pkg/cacik"
 
 // IHaveApples handles the step "I have X apples"
 // @cacik `^I have (\d+) apples$`
-func IHaveApples(ctx context.Context, appleCount int) (context.Context, error) {
-	fmt.Printf("I have %d apples\n", appleCount)
-
-	return ctx, nil
+func IHaveApples(ctx *cacik.Context, appleCount int) {
+	ctx.Logger().Info("I have apples", "count", appleCount)
 }
 ```
 
@@ -68,69 +63,58 @@ Example:
 
 ```go
 // @cacik `^I have {int} apples$`
-func IHaveApples(ctx context.Context, count int) (context.Context, error) {
-    fmt.Printf("I have %d apples\n", count)
-    return ctx, nil
+func IHaveApples(ctx *cacik.Context, count int) {
+    ctx.Logger().Info("I have apples", "count", count)
 }
 
 // @cacik `^the price is {float}$`
-func PriceIs(ctx context.Context, price float64) (context.Context, error) {
-    fmt.Printf("Price: %.2f\n", price)
-    return ctx, nil
+func PriceIs(ctx *cacik.Context, price float64) {
+    ctx.Logger().Info("price set", "price", price)
 }
 
 // @cacik `^my name is {word}$`
-func NameIs(ctx context.Context, name string) (context.Context, error) {
-    fmt.Printf("Name: %s\n", name)
-    return ctx, nil
+func NameIs(ctx *cacik.Context, name string) {
+    ctx.Logger().Info("name set", "name", name)
 }
 
 // @cacik `^I say {string}$`
-func Say(ctx context.Context, message string) (context.Context, error) {
-    fmt.Printf("Message: %s\n", message)
-    return ctx, nil
+func Say(ctx *cacik.Context, message string) {
+    ctx.Logger().Info("saying message", "message", message)
 }
 
 // @cacik `^the meeting is at {time}$`
-func MeetingAt(ctx context.Context, t time.Time) (context.Context, error) {
-    fmt.Printf("Meeting at: %s\n", t.Format("15:04"))
-    return ctx, nil
+func MeetingAt(ctx *cacik.Context, t time.Time) {
+    ctx.Logger().Info("meeting scheduled", "time", t.Format("15:04"))
 }
 
 // @cacik `^the event is on {date}$`
-func EventOn(ctx context.Context, d time.Time) (context.Context, error) {
-    fmt.Printf("Event on: %s\n", d.Format("2006-01-02"))
-    return ctx, nil
+func EventOn(ctx *cacik.Context, d time.Time) {
+    ctx.Logger().Info("event scheduled", "date", d.Format("2006-01-02"))
 }
 
 // @cacik `^the appointment is at {datetime}$`
-func AppointmentAt(ctx context.Context, dt time.Time) (context.Context, error) {
-    fmt.Printf("Appointment at: %s\n", dt.Format(time.RFC3339))
-    return ctx, nil
+func AppointmentAt(ctx *cacik.Context, dt time.Time) {
+    ctx.Logger().Info("appointment scheduled", "datetime", dt.Format(time.RFC3339))
 }
 
 // @cacik `^convert to {timezone}$`
-func ConvertTo(ctx context.Context, loc *time.Location) (context.Context, error) {
-    fmt.Printf("Timezone: %s\n", loc.String())
-    return ctx, nil
+func ConvertTo(ctx *cacik.Context, loc *time.Location) {
+    ctx.Logger().Info("converting timezone", "timezone", loc.String())
 }
 
 // @cacik `^user {email} logged in$`
-func UserLoggedIn(ctx context.Context, email string) (context.Context, error) {
-    fmt.Printf("User logged in: %s\n", email)
-    return ctx, nil
+func UserLoggedIn(ctx *cacik.Context, email string) {
+    ctx.Logger().Info("user logged in", "email", email)
 }
 
 // @cacik `^wait for {duration}$`
-func WaitFor(ctx context.Context, d time.Duration) (context.Context, error) {
-    fmt.Printf("Waiting for: %s\n", d)
-    return ctx, nil
+func WaitFor(ctx *cacik.Context, d time.Duration) {
+    ctx.Logger().Info("waiting", "duration", d)
 }
 
 // @cacik `^navigate to {url}$`
-func NavigateTo(ctx context.Context, u *url.URL) (context.Context, error) {
-    fmt.Printf("Navigating to: %s\n", u.String())
-    return ctx, nil
+func NavigateTo(ctx *cacik.Context, u *url.URL) {
+    ctx.Logger().Info("navigating", "url", u.String())
 }
 ```
 
@@ -219,7 +203,7 @@ Parses to Go's `*time.Location`.
 - `bool` - boolean values (see below)
 - `time.Time` - for `{time}`, `{date}`, `{datetime}` types
 - `*time.Location` - for `{timezone}` type
-- `context.Context` - automatically passed (should be first parameter)
+- `*cacik.Context` - automatically passed (should be first parameter)
 
 ### Using Regex Directly
 
@@ -228,8 +212,8 @@ You can also use raw regex patterns with capture groups:
 ```go
 // Using regex capture group instead of {int}
 // @cacik `^I have (\d+) apples$`
-func IHaveApples(ctx context.Context, count int) (context.Context, error) {
-    return ctx, nil
+func IHaveApples(ctx *cacik.Context, count int) {
+    // Step implementation
 }
 ```
 
@@ -250,13 +234,8 @@ Example:
 ```go
 // FeatureToggle handles feature state
 // @cacik `^the feature is (enabled|disabled)$`
-func FeatureToggle(ctx context.Context, enabled bool) (context.Context, error) {
-    if enabled {
-        fmt.Println("Feature is ON")
-    } else {
-        fmt.Println("Feature is OFF")
-    }
-    return ctx, nil
+func FeatureToggle(ctx *cacik.Context, enabled bool) {
+    ctx.Logger().Info("feature toggled", "enabled", enabled)
 }
 ```
 
@@ -278,8 +257,8 @@ Cacik supports custom enum-like types. Define a type based on a primitive and us
 package steps
 
 import (
-    "context"
     "fmt"
+    "github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // Define a custom type based on string
@@ -293,9 +272,8 @@ const (
 
 // Use {typename} syntax in step definition
 // @cacik `^I select {color}$`
-func SelectColor(ctx context.Context, c Color) (context.Context, error) {
-    fmt.Printf("Selected: %s\n", c)
-    return ctx, nil
+func SelectColor(ctx *cacik.Context, c Color) {
+    ctx.Logger().Info("color selected", "color", c)
 }
 ```
 
@@ -337,9 +315,8 @@ const (
 )
 
 // @cacik `^priority is {priority}$`
-func SetPriority(ctx context.Context, p Priority) (context.Context, error) {
-    fmt.Printf("Priority: %d\n", p)
-    return ctx, nil
+func SetPriority(ctx *cacik.Context, p Priority) {
+    ctx.Logger().Info("priority set", "priority", p)
 }
 ```
 
@@ -362,23 +339,124 @@ When I select Red
 
 ### Function Signature
 
-Step functions can have the following signatures:
+Step functions do not return anything. Use `ctx.SetError()` or `ctx.Errorf()` for error handling:
 
 ```go
 // Simple function with no arguments
 func MyStep() {}
 
 // Function with context
-func MyStep(ctx context.Context) (context.Context, error) {}
+func MyStep(ctx *cacik.Context) {}
 
 // Function with captured arguments
-func MyStep(ctx context.Context, arg1 int, arg2 string) (context.Context, error) {}
+func MyStep(ctx *cacik.Context, arg1 int, arg2 string) {}
 
 // Function without context but with arguments
-func MyStep(count int, name string) error {}
+func MyStep(count int, name string) {}
 
 // Function with custom type
-func MyStep(ctx context.Context, color Color) (context.Context, error) {}
+func MyStep(ctx *cacik.Context, color Color) {}
+```
+
+## Context API
+
+The `*cacik.Context` provides logging, assertions, and state management for BDD tests.
+
+### Logging
+
+```go
+func MyStep(ctx *cacik.Context) {
+    ctx.Logger().Debug("debugging info", "key", "value")
+    ctx.Logger().Info("informational message")
+    ctx.Logger().Warn("warning message")
+    ctx.Logger().Error("error message")
+}
+```
+
+### State Management
+
+Store and retrieve values across steps within a scenario via `ctx.Data()`:
+
+```go
+// @cacik `^I have {int} apples$`
+func IHaveApples(ctx *cacik.Context, count int) {
+    ctx.Data().Set("apples", count)
+}
+
+// @cacik `^I eat {int} apples$`
+func IEatApples(ctx *cacik.Context, eaten int) {
+    current := ctx.Data().MustGet("apples").(int)
+    ctx.Data().Set("apples", current - eaten)
+}
+
+// @cacik `^I should have {int} apples$`
+func IShouldHaveApples(ctx *cacik.Context, expected int) {
+    actual := ctx.Data().MustGet("apples").(int)
+    ctx.Assert().Equal(expected, actual, "apple count mismatch")
+}
+```
+
+### Assertions
+
+All assertions fail immediately (fail-fast behavior). Access assertions via `ctx.Assert()`:
+
+```go
+func MyStep(ctx *cacik.Context, value int) {
+    // Equality
+    ctx.Assert().Equal(expected, actual, "optional message")
+    ctx.Assert().NotEqual(a, b)
+    
+    // Nil checks
+    ctx.Assert().Nil(value)
+    ctx.Assert().NotNil(value)
+    
+    // Boolean
+    ctx.Assert().True(condition, "message")
+    ctx.Assert().False(condition)
+    
+    // Errors
+    ctx.Assert().NoError(err)
+    ctx.Assert().Error(err)
+    ctx.Assert().ErrorContains(err, "substring")
+    
+    // Collections
+    ctx.Assert().Contains(slice, element)
+    ctx.Assert().NotContains(slice, element)
+    ctx.Assert().Len(collection, expectedLen)
+    ctx.Assert().Empty(collection)
+    ctx.Assert().NotEmpty(collection)
+    
+    // Comparisons
+    ctx.Assert().Greater(5, 3)
+    ctx.Assert().GreaterOrEqual(5, 5)
+    ctx.Assert().Less(3, 5)
+    ctx.Assert().LessOrEqual(5, 5)
+    
+    // Zero values
+    ctx.Assert().Zero(value)
+    ctx.Assert().NotZero(value)
+    
+    // Fail immediately
+    ctx.Assert().Fail("reason")
+}
+```
+
+### Access Standard Context
+
+For compatibility with Go libraries that expect `context.Context`:
+
+```go
+func MyStep(ctx *cacik.Context) {
+    // Get the underlying context.Context
+    stdCtx := ctx.Context()
+    
+    // Use with libraries
+    result, err := someLibrary.DoSomething(stdCtx)
+    ctx.Assert().NoError(err)
+    
+    // Update the context (for timeouts, cancellation, etc.)
+    ctx.WithContext(context.WithTimeout(stdCtx, 5*time.Second))
+}
 ```
 
 ## Install
@@ -431,6 +509,47 @@ go run .
 ```
 
 It will print `I have 3 apples`
+
+## Parallel Execution
+
+Run scenarios in parallel using the `--parallel` flag:
+
+```shell
+# Run with 4 workers
+go run . --parallel 4
+
+# Alternative syntax
+go run . --parallel=8
+
+# Combine with tags
+go run . --tags "@smoke" --parallel 4
+```
+
+### How It Works
+
+- Each scenario runs in complete isolation with its own `*cacik.Context`
+- Background steps are re-executed for each scenario
+- All errors are collected and reported (no fail-fast between scenarios)
+- Default: 1 (sequential execution)
+
+### Context Isolation
+
+When running in parallel, each scenario gets its own isolated context:
+
+```go
+// @cacik `^I set value to {int}$`
+func SetValue(ctx *cacik.Context, val int) {
+    ctx.Data().Set("value", val)  // This is isolated per scenario
+}
+
+// @cacik `^the value should be {int}$`
+func CheckValue(ctx *cacik.Context, expected int) {
+    actual := ctx.Data().MustGet("value").(int)
+    ctx.Assert().Equal(expected, actual)
+}
+```
+
+Each parallel scenario has its own `Data()` store, so there's no risk of race conditions or data leakage between scenarios.
 
 ## Running with Tags
 

@@ -1,13 +1,14 @@
 package runner
 
 import (
-	"context"
 	"os"
+	"sync"
 	"testing"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
 	messages "github.com/cucumber/messages/go/v21"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 	"github.com/stretchr/testify/require"
 )
 
@@ -313,18 +314,18 @@ func TestCucumberRunner_Run(t *testing.T) {
 
 		runner := NewCucumberRunner().
 			WithFeaturesDirectories("testdata/with-tag").
-			RegisterStep("^hello$", func(ctx context.Context) (context.Context, error) {
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
 				stepExecuted = true
-				return ctx, nil
+
 			}).
-			RegisterStep("^user is logged in$", func(ctx context.Context) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+
 			}).
-			RegisterStep("^user clicks (.+)$", func(ctx context.Context, link string) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+
 			}).
-			RegisterStep("^user will be logged out$", func(ctx context.Context) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+
 			})
 
 		withArgs([]string{"cmd", "--tags", "@billing"}, func() {
@@ -339,9 +340,9 @@ func TestCucumberRunner_Run(t *testing.T) {
 
 		runner := NewCucumberRunner().
 			WithFeaturesDirectories("testdata/without-tag").
-			RegisterStep("^.*$", func(ctx context.Context) (context.Context, error) {
+			RegisterStep("^.*$", func(ctx *cacik.Context) {
 				stepExecuted = true
-				return ctx, nil
+
 			})
 
 		withArgs([]string{"cmd", "--tags", "@nonexistent"}, func() {
@@ -356,18 +357,18 @@ func TestCucumberRunner_Run(t *testing.T) {
 
 		runner := NewCucumberRunner().
 			WithFeaturesDirectories("testdata/with-tag").
-			RegisterStep("^hello$", func(ctx context.Context) (context.Context, error) {
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
 				stepExecuted = true
-				return ctx, nil
+
 			}).
-			RegisterStep("^user is logged in$", func(ctx context.Context) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+
 			}).
-			RegisterStep("^user clicks (.+)$", func(ctx context.Context, link string) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+
 			}).
-			RegisterStep("^user will be logged out$", func(ctx context.Context) (context.Context, error) {
-				return ctx, nil
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+
 			})
 
 		withArgs([]string{"cmd"}, func() {
@@ -404,6 +405,134 @@ func TestCucumberRunner_RegisterStep(t *testing.T) {
 
 		require.Panics(t, func() {
 			runner.RegisterStep("[invalid", func() {})
+		})
+	})
+}
+
+func Test_parseParallelFromArgs(t *testing.T) {
+	t.Run("parses --parallel with space", func(t *testing.T) {
+		withArgs([]string{"cmd", "--parallel", "4"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 4, result)
+		})
+	})
+
+	t.Run("parses --parallel= format", func(t *testing.T) {
+		withArgs([]string{"cmd", "--parallel=8"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 8, result)
+		})
+	})
+
+	t.Run("returns 1 when not specified", func(t *testing.T) {
+		withArgs([]string{"cmd"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 1, result)
+		})
+	})
+
+	t.Run("returns 1 for invalid value", func(t *testing.T) {
+		withArgs([]string{"cmd", "--parallel", "invalid"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 1, result)
+		})
+	})
+
+	t.Run("returns 1 for zero", func(t *testing.T) {
+		withArgs([]string{"cmd", "--parallel", "0"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 1, result)
+		})
+	})
+
+	t.Run("returns 1 for negative", func(t *testing.T) {
+		withArgs([]string{"cmd", "--parallel", "-1"}, func() {
+			result := parseParallelFromArgs()
+			require.Equal(t, 1, result)
+		})
+	})
+
+	t.Run("combines with tags", func(t *testing.T) {
+		withArgs([]string{"cmd", "--tags", "@smoke", "--parallel", "4"}, func() {
+			parallel := parseParallelFromArgs()
+			tags := parseTagsFromArgs()
+			require.Equal(t, 4, parallel)
+			require.Equal(t, "@smoke", tags)
+		})
+	})
+}
+
+func TestCucumberRunner_RunParallel(t *testing.T) {
+	t.Run("executes scenarios in parallel", func(t *testing.T) {
+		var mu sync.Mutex
+		executedSteps := make([]string, 0)
+
+		runner := NewCucumberRunner().
+			WithFeaturesDirectories("testdata/with-tag").
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "hello")
+				mu.Unlock()
+
+			}).
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user is logged in")
+				mu.Unlock()
+
+			}).
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user clicks "+link)
+				mu.Unlock()
+
+			}).
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user will be logged out")
+				mu.Unlock()
+
+			})
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			require.NotEmpty(t, executedSteps, "expected steps to be executed")
+		})
+	})
+
+	t.Run("isolates context between scenarios", func(t *testing.T) {
+		var mu sync.Mutex
+		contextValues := make(map[string]int)
+
+		runner := NewCucumberRunner().
+			WithFeaturesDirectories("testdata/with-tag").
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
+				ctx.Data().Set("value", 42)
+
+			}).
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+				// This should not see the value from another scenario
+				_, ok := ctx.Data().Get("value")
+				mu.Lock()
+				if ok {
+					contextValues["found"]++
+				} else {
+					contextValues["notfound"]++
+				}
+				mu.Unlock()
+
+			}).
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+
+			}).
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+
+			})
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
 		})
 	})
 }

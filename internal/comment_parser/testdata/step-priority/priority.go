@@ -1,8 +1,7 @@
 package step_priority
 
 import (
-	"context"
-	"fmt"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // Priority represents a priority level
@@ -16,14 +15,12 @@ const (
 
 // SetPriority sets the priority level
 // @cacik `^priority is {priority}$`
-func SetPriority(ctx context.Context, p Priority) (context.Context, error) {
-	fmt.Printf("Priority set to: %d\n", p)
-	return ctx, nil
+func SetPriority(ctx *cacik.Context, p Priority) {
+	ctx.Logger().Info("priority set", "priority", p)
 }
 
 // PriorityIs checks if the priority matches
 // @cacik `^the priority is {priority}$`
-func PriorityIs(ctx context.Context, p Priority) (context.Context, error) {
-	fmt.Printf("The priority is: %d\n", p)
-	return ctx, nil
+func PriorityIs(ctx *cacik.Context, p Priority) {
+	ctx.Logger().Info("priority is", "priority", p)
 }

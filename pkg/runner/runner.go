@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
 	messages "github.com/cucumber/messages/go/v21"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 	"github.com/denizgursoy/cacik/pkg/executor"
 	"github.com/denizgursoy/cacik/pkg/gherkin_parser"
 	"github.com/denizgursoy/cacik/pkg/models"
@@ -19,6 +22,7 @@ type (
 		config             *models.Config
 		featureDirectories []string
 		executor           *executor.StepExecutor
+		logger             cacik.Logger
 	}
 )
 
@@ -67,8 +71,15 @@ func (c *CucumberRunner) RegisterCustomType(name, underlying string, values map[
 	return c
 }
 
+// WithLogger sets the logger for step functions
+func (c *CucumberRunner) WithLogger(logger cacik.Logger) *CucumberRunner {
+	c.logger = logger
+	return c
+}
+
 // Run executes all feature files, optionally filtering by tag expression from CLI args.
 // Tag expression is passed via --tags flag, e.g.: go run . --tags "@smoke and @fast"
+// Parallel execution is enabled via --parallel flag, e.g.: go run . --parallel 4
 // Supports Cucumber tag expression syntax: and, or, not, parentheses
 // Examples:
 //   - @smoke
@@ -80,6 +91,9 @@ func (c *CucumberRunner) Run() error {
 	if len(c.featureDirectories) == 0 {
 		c.featureDirectories = append(c.featureDirectories, ".")
 	}
+
+	// Parse parallel worker count from CLI arguments
+	workers := parseParallelFromArgs()
 
 	// Parse tag expression from CLI arguments
 	tagExpr := parseTagsFromArgs()
@@ -97,6 +111,8 @@ func (c *CucumberRunner) Run() error {
 		return err
 	}
 
+	// Parse all documents and filter by tags
+	var docs []*documentWithFile
 	for _, file := range featureFiles {
 		readFile, err := os.ReadFile(file)
 		if err != nil {
@@ -116,9 +132,46 @@ func (c *CucumberRunner) Run() error {
 			}
 		}
 
-		// Execute the document
-		if err := c.executor.Execute(document); err != nil {
-			return fmt.Errorf("execution failed for %s: %w", file, err)
+		docs = append(docs, &documentWithFile{document: document, file: file})
+	}
+
+	// If parallel execution is requested
+	if workers > 1 {
+		// Collect all scenarios from filtered documents
+		scenarios := c.collectScenarios(docs)
+		if len(scenarios) == 0 {
+			return nil
+		}
+
+		// Execute in parallel
+		results := c.executeParallel(scenarios, workers)
+
+		// Collect errors
+		var failedResults []ScenarioResult
+		for _, r := range results {
+			if r.Error != nil {
+				failedResults = append(failedResults, r)
+			}
+		}
+
+		if len(failedResults) > 0 {
+			return fmt.Errorf("%d scenario(s) failed:\n%s", len(failedResults), formatErrors(failedResults))
+		}
+		return nil
+	}
+
+	// Sequential execution (original behavior)
+	// Set up cacik context with logger
+	opts := make([]cacik.Option, 0)
+	if c.logger != nil {
+		opts = append(opts, cacik.WithLogger(c.logger))
+	}
+	ctx := cacik.New(opts...)
+	c.executor.SetCacikContext(ctx)
+
+	for _, docWithFile := range docs {
+		if err := c.executor.Execute(docWithFile.document); err != nil {
+			return fmt.Errorf("execution failed for %s: %w", docWithFile.file, err)
 		}
 	}
 
@@ -256,4 +309,192 @@ func hasRuleScenarios(rule *messages.Rule) bool {
 		}
 	}
 	return false
+}
+
+// =============================================================================
+// Parallel Execution Support
+// =============================================================================
+
+// ScenarioExecution holds a scenario with its associated backgrounds for execution
+type ScenarioExecution struct {
+	Scenario          *messages.Scenario
+	FeatureBackground *messages.Background
+	RuleBackground    *messages.Background
+	FeatureFile       string
+	FeatureName       string
+}
+
+// ScenarioResult holds the result of executing a scenario
+type ScenarioResult struct {
+	Execution *ScenarioExecution
+	Error     error
+}
+
+// documentWithFile pairs a parsed document with its source file path
+type documentWithFile struct {
+	document *messages.GherkinDocument
+	file     string
+}
+
+// parseParallelFromArgs extracts the parallel worker count from command-line arguments.
+// Supports: --parallel 4 or --parallel=4
+// Returns 1 (sequential) if not specified or invalid.
+func parseParallelFromArgs() int {
+	args := os.Args[1:]
+	for i, arg := range args {
+		if arg == "--parallel" && i+1 < len(args) {
+			n, err := strconv.Atoi(args[i+1])
+			if err == nil && n > 0 {
+				return n
+			}
+		}
+		if strings.HasPrefix(arg, "--parallel=") {
+			val := strings.TrimPrefix(arg, "--parallel=")
+			n, err := strconv.Atoi(val)
+			if err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	return 1
+}
+
+// collectScenarios gathers all scenarios from documents with their backgrounds
+func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioExecution {
+	var scenarios []ScenarioExecution
+
+	for _, docWithFile := range docs {
+		doc := docWithFile.document
+		if doc.Feature == nil {
+			continue
+		}
+
+		var featureBackground *messages.Background
+		featureName := doc.Feature.Name
+
+		for _, child := range doc.Feature.Children {
+			if child.Background != nil {
+				featureBackground = child.Background
+			} else if child.Scenario != nil {
+				scenarios = append(scenarios, ScenarioExecution{
+					Scenario:          child.Scenario,
+					FeatureBackground: featureBackground,
+					FeatureFile:       docWithFile.file,
+					FeatureName:       featureName,
+				})
+			} else if child.Rule != nil {
+				var ruleBackground *messages.Background
+				for _, rc := range child.Rule.Children {
+					if rc.Background != nil {
+						ruleBackground = rc.Background
+					} else if rc.Scenario != nil {
+						scenarios = append(scenarios, ScenarioExecution{
+							Scenario:          rc.Scenario,
+							FeatureBackground: featureBackground,
+							RuleBackground:    ruleBackground,
+							FeatureFile:       docWithFile.file,
+							FeatureName:       featureName,
+						})
+					}
+				}
+			}
+		}
+	}
+	return scenarios
+}
+
+// executeScenarioWithIsolatedContext executes a single scenario with its own context
+func (c *CucumberRunner) executeScenarioWithIsolatedContext(exec ScenarioExecution) error {
+	// Create fresh context for this scenario
+	opts := make([]cacik.Option, 0)
+	if c.logger != nil {
+		opts = append(opts, cacik.WithLogger(c.logger))
+	}
+	ctx := cacik.New(opts...)
+
+	// Clone executor and set context
+	isolatedExec := c.executor.Clone()
+	isolatedExec.SetCacikContext(ctx)
+
+	// Execute feature background
+	if exec.FeatureBackground != nil {
+		for _, step := range exec.FeatureBackground.Steps {
+			if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+				return fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
+			}
+		}
+	}
+
+	// Execute rule background
+	if exec.RuleBackground != nil {
+		for _, step := range exec.RuleBackground.Steps {
+			if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+				return fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
+			}
+		}
+	}
+
+	// Execute scenario steps
+	for _, step := range exec.Scenario.Steps {
+		if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+			return fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
+		}
+	}
+
+	return nil
+}
+
+// executeParallel runs scenarios in parallel using a worker pool
+func (c *CucumberRunner) executeParallel(scenarios []ScenarioExecution, workers int) []ScenarioResult {
+	jobs := make(chan ScenarioExecution, len(scenarios))
+	results := make(chan ScenarioResult, len(scenarios))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for scenario := range jobs {
+				err := c.executeScenarioWithIsolatedContext(scenario)
+				results <- ScenarioResult{
+					Execution: &scenario,
+					Error:     err,
+				}
+			}
+		}()
+	}
+
+	// Send jobs
+	for _, s := range scenarios {
+		jobs <- s
+	}
+	close(jobs)
+
+	// Wait and close results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results
+	var allResults []ScenarioResult
+	for r := range results {
+		allResults = append(allResults, r)
+	}
+	return allResults
+}
+
+// formatErrors formats multiple errors into a single error message
+func formatErrors(results []ScenarioResult) string {
+	var sb strings.Builder
+	for i, r := range results {
+		if r.Error != nil {
+			if i > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(fmt.Sprintf("- %s: %v", r.Execution.Scenario.Name, r.Error))
+		}
+	}
+	return sb.String()
 }

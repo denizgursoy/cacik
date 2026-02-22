@@ -1,7 +1,6 @@
 package executor
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"reflect"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	messages "github.com/cucumber/messages/go/v21"
+	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
 // Time/Date parsing layouts (EU format default: DD/MM/YYYY)
@@ -90,7 +90,7 @@ type StepExecutor struct {
 	steps       []StepDefinition
 	patternSet  map[string]bool            // Track registered patterns for duplicate detection
 	customTypes map[string]*CustomTypeInfo // type name -> custom type info
-	context     context.Context
+	cacikCtx    *cacik.Context             // Cacik context for step functions
 }
 
 // NewStepExecutor creates a new StepExecutor
@@ -99,7 +99,27 @@ func NewStepExecutor() *StepExecutor {
 		steps:       make([]StepDefinition, 0),
 		patternSet:  make(map[string]bool),
 		customTypes: make(map[string]*CustomTypeInfo),
-		context:     context.Background(),
+		cacikCtx:    cacik.New(),
+	}
+}
+
+// SetCacikContext sets the cacik context for step execution
+func (e *StepExecutor) SetCacikContext(ctx *cacik.Context) {
+	e.cacikCtx = ctx
+}
+
+// GetCacikContext returns the current cacik context
+func (e *StepExecutor) GetCacikContext() *cacik.Context {
+	return e.cacikCtx
+}
+
+// Clone creates a copy of the executor with fresh context but shared step definitions
+func (e *StepExecutor) Clone() *StepExecutor {
+	return &StepExecutor{
+		steps:       e.steps,       // Share step definitions (read-only)
+		patternSet:  e.patternSet,  // Share pattern set (read-only)
+		customTypes: e.customTypes, // Share custom types (read-only)
+		cacikCtx:    nil,           // Will be set per-scenario
 	}
 }
 
@@ -187,7 +207,7 @@ func (e *StepExecutor) executeScenarioWithBackground(scenario *messages.Scenario
 	}
 
 	for _, step := range scenario.Steps {
-		if err := e.executeStep(step.Text); err != nil {
+		if err := e.ExecuteStep(step.Text); err != nil {
 			return fmt.Errorf("step %q failed: %w", step.Text, err)
 		}
 	}
@@ -197,7 +217,7 @@ func (e *StepExecutor) executeScenarioWithBackground(scenario *messages.Scenario
 func (e *StepExecutor) executeBackground(background *messages.Background) error {
 	if background != nil {
 		for _, step := range background.Steps {
-			if err := e.executeStep(step.Text); err != nil {
+			if err := e.ExecuteStep(step.Text); err != nil {
 				return fmt.Errorf("background step %q failed: %w", step.Text, err)
 			}
 		}
@@ -205,8 +225,8 @@ func (e *StepExecutor) executeBackground(background *messages.Background) error 
 	return nil
 }
 
-// executeStep finds and executes a matching step definition
-func (e *StepExecutor) executeStep(stepText string) error {
+// ExecuteStep finds and executes a matching step definition (exported for parallel execution)
+func (e *StepExecutor) ExecuteStep(stepText string) error {
 	for _, stepDef := range e.steps {
 		matches := stepDef.Pattern.FindStringSubmatch(stepText)
 		if matches == nil {
@@ -217,15 +237,11 @@ func (e *StepExecutor) executeStep(stepText string) error {
 		capturedArgs := matches[1:]
 
 		// Invoke the step function with extracted arguments
-		newCtx, err := e.invokeStepFunction(stepDef.Function, capturedArgs)
+		err := e.invokeStepFunction(stepDef.Function, capturedArgs)
 		if err != nil {
 			return err
 		}
 
-		// Update context if returned
-		if newCtx != nil {
-			e.context = newCtx
-		}
 		return nil
 	}
 
@@ -233,22 +249,29 @@ func (e *StepExecutor) executeStep(stepText string) error {
 }
 
 // invokeStepFunction calls the step function with proper argument conversion
-func (e *StepExecutor) invokeStepFunction(fn any, args []string) (context.Context, error) {
+func (e *StepExecutor) invokeStepFunction(fn any, args []string) error {
 	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 
 	// Build argument list
 	callArgs, err := e.buildCallArgs(fnType, args)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// Call the function
 	results := fnValue.Call(callArgs)
 
-	// Process return values
-	return e.processReturnValues(fnType, results)
+	// Process return values (check for returned error)
+	if err := e.processReturnValues(fnType, results); err != nil {
+		return err
+	}
+
+	return nil
 }
+
+// cacikContextType is the reflect type for *cacik.Context
+var cacikContextType = reflect.TypeOf((*cacik.Context)(nil))
 
 // buildCallArgs constructs the argument slice for function invocation
 func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string) ([]reflect.Value, error) {
@@ -260,9 +283,9 @@ func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string)
 	for i := 0; i < numParams; i++ {
 		paramType := fnType.In(i)
 
-		// Check if this parameter is context.Context
-		if paramType.Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
-			callArgs = append(callArgs, reflect.ValueOf(e.context))
+		// Check if this parameter is *cacik.Context
+		if paramType == cacikContextType {
+			callArgs = append(callArgs, reflect.ValueOf(e.cacikCtx))
 			continue
 		}
 
@@ -284,33 +307,21 @@ func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string)
 	return callArgs, nil
 }
 
-// processReturnValues extracts context and error from function return values
-func (e *StepExecutor) processReturnValues(fnType reflect.Type, results []reflect.Value) (context.Context, error) {
-	var newCtx context.Context
-	var retErr error
-
+// processReturnValues extracts error from function return values
+func (e *StepExecutor) processReturnValues(fnType reflect.Type, results []reflect.Value) error {
 	for i := 0; i < len(results); i++ {
 		result := results[i]
 		resultType := fnType.Out(i)
 
-		// Check for context.Context
-		if resultType.Implements(reflect.TypeOf((*context.Context)(nil)).Elem()) {
-			if !result.IsNil() {
-				newCtx = result.Interface().(context.Context)
-			}
-			continue
-		}
-
 		// Check for error
 		if resultType.Implements(reflect.TypeOf((*error)(nil)).Elem()) {
 			if !result.IsNil() {
-				retErr = result.Interface().(error)
+				return result.Interface().(error)
 			}
-			continue
 		}
 	}
 
-	return newCtx, retErr
+	return nil
 }
 
 // convertArg converts a string argument to the target type
@@ -548,16 +559,6 @@ func parseBool(s string) (bool, error) {
 	default:
 		return false, fmt.Errorf("cannot parse %q as bool", s)
 	}
-}
-
-// GetContext returns the current execution context
-func (e *StepExecutor) GetContext() context.Context {
-	return e.context
-}
-
-// SetContext sets the execution context
-func (e *StepExecutor) SetContext(ctx context.Context) {
-	e.context = ctx
 }
 
 // =============================================================================
