@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
@@ -143,14 +144,15 @@ func (c *CucumberRunner) Run() error {
 			return nil
 		}
 
-		// Parse --no-color flag
+		// Parse flags
 		useColors := !parseNoColorFromArgs()
+		failFast := parseFailFastFromArgs()
 
 		// Create main reporter for summary aggregation
 		mainReporter := cacik.NewConsoleReporter(useColors)
 
 		// Execute in parallel with buffered reporters
-		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter)
+		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter, failFast)
 
 		// Print summary
 		mainReporter.PrintSummary()
@@ -170,8 +172,9 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Sequential execution (original behavior)
-	// Parse --no-color flag
+	// Parse flags
 	useColors := !parseNoColorFromArgs()
+	failFast := parseFailFastFromArgs()
 
 	// Create reporter
 	reporter := cacik.NewConsoleReporter(useColors)
@@ -188,7 +191,7 @@ func (c *CucumberRunner) Run() error {
 	// Execute documents with reporter lifecycle calls
 	var runErr error
 	for _, docWithFile := range docs {
-		if err := c.executeDocumentWithReporter(docWithFile.document, reporter); err != nil {
+		if err := c.executeDocumentWithReporter(docWithFile.document, reporter, failFast); err != nil {
 			runErr = fmt.Errorf("execution failed for %s: %w", docWithFile.file, err)
 			break
 		}
@@ -201,7 +204,7 @@ func (c *CucumberRunner) Run() error {
 }
 
 // executeDocumentWithReporter executes a document with reporter lifecycle calls
-func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinDocument, reporter *cacik.ConsoleReporter) error {
+func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinDocument, reporter *cacik.ConsoleReporter, failFast bool) error {
 	if document == nil || document.Feature == nil {
 		return nil
 	}
@@ -215,11 +218,11 @@ func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinD
 		if child.Background != nil {
 			featureBackground = child.Background
 		} else if child.Rule != nil {
-			if err := c.executeRuleWithReporter(child.Rule, featureBackground, reporter); err != nil {
+			if err := c.executeRuleWithReporter(child.Rule, featureBackground, reporter, failFast); err != nil {
 				return err
 			}
 		} else if child.Scenario != nil {
-			if err := c.executeScenarioWithReporter(child.Scenario, featureBackground, nil, reporter); err != nil {
+			if err := c.executeScenarioWithReporter(child.Scenario, featureBackground, nil, reporter, failFast); err != nil {
 				return err
 			}
 		}
@@ -229,7 +232,7 @@ func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinD
 }
 
 // executeRuleWithReporter executes a rule with reporter lifecycle calls
-func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBackground *messages.Background, reporter *cacik.ConsoleReporter) error {
+func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
 	var ruleBackground *messages.Background
 
 	for _, child := range rule.Children {
@@ -242,11 +245,14 @@ func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBac
 				if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
 					// Mark scenario as failed since background failed
 					reporter.AddScenarioResult(false)
+					if failFast {
+						return fmt.Errorf("scenario %q failed: %w", child.Scenario.Name, err)
+					}
 					continue
 				}
 			}
 			// Execute rule background and scenario
-			if err := c.executeScenarioWithReporter(child.Scenario, ruleBackground, nil, reporter); err != nil {
+			if err := c.executeScenarioWithReporter(child.Scenario, ruleBackground, nil, reporter, failFast); err != nil {
 				return err
 			}
 		}
@@ -255,7 +261,7 @@ func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBac
 }
 
 // executeScenarioWithReporter executes a scenario with reporter lifecycle calls
-func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario, background *messages.Background, ruleBackground *messages.Background, reporter *cacik.ConsoleReporter) error {
+func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario, background *messages.Background, ruleBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
 	// Execute background if present
 	if background != nil {
 		reporter.BackgroundStart()
@@ -267,16 +273,21 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 				reporter.AddStepResult(false, true)
 			}
 			reporter.AddScenarioResult(false)
-			return nil // Don't return error, continue with next scenario
+			if failFast {
+				return fmt.Errorf("scenario %q failed: background step failed", scenario.Name)
+			}
+			return nil // Continue with next scenario
 		}
 	}
 
 	reporter.ScenarioStart(scenario.Name)
 
 	scenarioPassed := true
+	var scenarioErr error
 	for i, step := range scenario.Steps {
 		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
 			scenarioPassed = false
+			scenarioErr = err
 			// Skip remaining steps
 			for j := i + 1; j < len(scenario.Steps); j++ {
 				remainingStep := scenario.Steps[j]
@@ -288,6 +299,10 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 	}
 
 	reporter.AddScenarioResult(scenarioPassed)
+
+	if !scenarioPassed && failFast {
+		return fmt.Errorf("scenario %q failed: %w", scenario.Name, scenarioErr)
+	}
 	return nil
 }
 
@@ -476,6 +491,17 @@ func parseNoColorFromArgs() bool {
 	return false
 }
 
+// parseFailFastFromArgs checks if --fail-fast flag is present in command-line arguments.
+func parseFailFastFromArgs() bool {
+	args := os.Args[1:]
+	for _, arg := range args {
+		if arg == "--fail-fast" {
+			return true
+		}
+	}
+	return false
+}
+
 // parseParallelFromArgs extracts the parallel worker count from command-line arguments.
 // Supports: --parallel 4 or --parallel=4
 // Returns 1 (sequential) if not specified or invalid.
@@ -626,7 +652,7 @@ func (c *CucumberRunner) executeParallel(scenarios []ScenarioExecution, workers 
 }
 
 // executeParallelWithReporter runs scenarios in parallel with buffered reporters
-func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter) []ScenarioResult {
+func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter, failFast bool) []ScenarioResult {
 	type resultWithReporter struct {
 		result   ScenarioResult
 		reporter *cacik.ConsoleReporter
@@ -635,6 +661,9 @@ func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecuti
 	jobs := make(chan ScenarioExecution, len(scenarios))
 	results := make(chan resultWithReporter, len(scenarios))
 
+	// For fail-fast: track if we should stop
+	var failed int32 // atomic flag
+
 	// Start workers
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
@@ -642,7 +671,19 @@ func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecuti
 		go func() {
 			defer wg.Done()
 			for scenario := range jobs {
+				// Check if we should skip due to fail-fast
+				if failFast && atomic.LoadInt32(&failed) == 1 {
+					// Still need to drain the channel but skip execution
+					continue
+				}
+
 				reporter, err := c.executeScenarioWithBufferedReporter(scenario, useColors)
+
+				// Mark as failed if this scenario failed
+				if err != nil && failFast {
+					atomic.StoreInt32(&failed, 1)
+				}
+
 				results <- resultWithReporter{
 					result: ScenarioResult{
 						Execution: &scenario,
