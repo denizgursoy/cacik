@@ -52,7 +52,6 @@ func OwnedByWithVisibility(ctx *cacik.Context, color Color, owner string, visibl
 // SizedItemCount combines {size}, {int}, and {color}
 // @cacik `^I have {int} {size} {color} boxes$`
 func SizedItemCount(ctx *cacik.Context, count int, size Size, color Color) {
-	ctx.WithContext()
 	ctx.Logger().Info("sized item count", "count", count, "size", size, "color", color)
 }
 

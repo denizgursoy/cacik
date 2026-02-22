@@ -150,7 +150,7 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		require.Equal(t, 42, capturedVal)
 	})
 
-	t.Run("panics when step function assertion fails", func(t *testing.T) {
+	t.Run("returns error when step function assertion fails", func(t *testing.T) {
 		exec := NewStepExecutor()
 
 		err := exec.RegisterStep("^failing step$", func(ctx *cacik.Context) {
@@ -159,9 +159,9 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 		require.NoError(t, err)
 
 		doc := createDocument("failing step")
-		require.Panics(t, func() {
-			exec.Execute(doc)
-		})
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "step failed")
 	})
 
 	t.Run("returns error for unmatched step", func(t *testing.T) {
@@ -1693,9 +1693,9 @@ func TestStepExecutor_Execute_Background_Extended(t *testing.T) {
 		require.NoError(t, err)
 
 		doc := createDocumentWithBackground("failing background step", "scenario step")
-		require.Panics(t, func() {
-			exec.Execute(doc)
-		})
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "background failed")
 		require.False(t, scenarioExecuted)
 	})
 

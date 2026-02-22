@@ -226,7 +226,13 @@ func (e *StepExecutor) executeBackground(background *messages.Background) error 
 }
 
 // ExecuteStep finds and executes a matching step definition (exported for parallel execution)
+// Deprecated: Use ExecuteStepWithKeyword instead
 func (e *StepExecutor) ExecuteStep(stepText string) error {
+	return e.ExecuteStepWithKeyword("", stepText)
+}
+
+// ExecuteStepWithKeyword finds and executes a matching step definition with keyword for reporting
+func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 	for _, stepDef := range e.steps {
 		matches := stepDef.Pattern.FindStringSubmatch(stepText)
 		if matches == nil {
@@ -236,16 +242,45 @@ func (e *StepExecutor) ExecuteStep(stepText string) error {
 		// Extract capture groups (skip the full match at index 0)
 		capturedArgs := matches[1:]
 
-		// Invoke the step function with extracted arguments
-		err := e.invokeStepFunction(stepDef.Function, capturedArgs)
-		if err != nil {
-			return err
+		// Execute step with panic recovery for reporter
+		var stepErr error
+		var panicMsg string
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					panicMsg = fmt.Sprintf("%v", r)
+					stepErr = fmt.Errorf("%v", r)
+				}
+			}()
+			stepErr = e.invokeStepFunction(stepDef.Function, capturedArgs)
+		}()
+
+		// Report step result
+		if e.cacikCtx != nil {
+			reporter := e.cacikCtx.Reporter()
+			if stepErr != nil {
+				errMsg := panicMsg
+				if errMsg == "" && stepErr != nil {
+					errMsg = stepErr.Error()
+				}
+				reporter.StepFailed(keyword, stepText, errMsg)
+				reporter.AddStepResult(false, false)
+			} else {
+				reporter.StepPassed(keyword, stepText)
+				reporter.AddStepResult(true, false)
+			}
 		}
 
-		return nil
+		return stepErr
 	}
 
-	return fmt.Errorf("no matching step definition found for: %s", stepText)
+	// No matching step found
+	errMsg := fmt.Sprintf("no matching step definition found for: %s", stepText)
+	if e.cacikCtx != nil {
+		e.cacikCtx.Reporter().StepFailed(keyword, stepText, errMsg)
+		e.cacikCtx.Reporter().AddStepResult(false, false)
+	}
+	return fmt.Errorf(errMsg)
 }
 
 // invokeStepFunction calls the step function with proper argument conversion

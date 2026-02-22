@@ -143,8 +143,17 @@ func (c *CucumberRunner) Run() error {
 			return nil
 		}
 
-		// Execute in parallel
-		results := c.executeParallel(scenarios, workers)
+		// Parse --no-color flag
+		useColors := !parseNoColorFromArgs()
+
+		// Create main reporter for summary aggregation
+		mainReporter := cacik.NewConsoleReporter(useColors)
+
+		// Execute in parallel with buffered reporters
+		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter)
+
+		// Print summary
+		mainReporter.PrintSummary()
 
 		// Collect errors
 		var failedResults []ScenarioResult
@@ -161,20 +170,140 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Sequential execution (original behavior)
-	// Set up cacik context with logger
+	// Parse --no-color flag
+	useColors := !parseNoColorFromArgs()
+
+	// Create reporter
+	reporter := cacik.NewConsoleReporter(useColors)
+
+	// Set up cacik context with logger and reporter
 	opts := make([]cacik.Option, 0)
 	if c.logger != nil {
 		opts = append(opts, cacik.WithLogger(c.logger))
 	}
+	opts = append(opts, cacik.WithReporter(reporter))
 	ctx := cacik.New(opts...)
 	c.executor.SetCacikContext(ctx)
 
+	// Execute documents with reporter lifecycle calls
+	var runErr error
 	for _, docWithFile := range docs {
-		if err := c.executor.Execute(docWithFile.document); err != nil {
-			return fmt.Errorf("execution failed for %s: %w", docWithFile.file, err)
+		if err := c.executeDocumentWithReporter(docWithFile.document, reporter); err != nil {
+			runErr = fmt.Errorf("execution failed for %s: %w", docWithFile.file, err)
+			break
 		}
 	}
 
+	// Print summary
+	reporter.PrintSummary()
+
+	return runErr
+}
+
+// executeDocumentWithReporter executes a document with reporter lifecycle calls
+func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinDocument, reporter *cacik.ConsoleReporter) error {
+	if document == nil || document.Feature == nil {
+		return nil
+	}
+
+	feature := document.Feature
+	reporter.FeatureStart(feature.Name)
+
+	var featureBackground *messages.Background
+
+	for _, child := range feature.Children {
+		if child.Background != nil {
+			featureBackground = child.Background
+		} else if child.Rule != nil {
+			if err := c.executeRuleWithReporter(child.Rule, featureBackground, reporter); err != nil {
+				return err
+			}
+		} else if child.Scenario != nil {
+			if err := c.executeScenarioWithReporter(child.Scenario, featureBackground, nil, reporter); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// executeRuleWithReporter executes a rule with reporter lifecycle calls
+func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBackground *messages.Background, reporter *cacik.ConsoleReporter) error {
+	var ruleBackground *messages.Background
+
+	for _, child := range rule.Children {
+		if child.Background != nil {
+			ruleBackground = child.Background
+		} else if child.Scenario != nil {
+			// Execute feature background first
+			if featureBackground != nil {
+				reporter.BackgroundStart()
+				if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
+					// Mark scenario as failed since background failed
+					reporter.AddScenarioResult(false)
+					continue
+				}
+			}
+			// Execute rule background and scenario
+			if err := c.executeScenarioWithReporter(child.Scenario, ruleBackground, nil, reporter); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// executeScenarioWithReporter executes a scenario with reporter lifecycle calls
+func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario, background *messages.Background, ruleBackground *messages.Background, reporter *cacik.ConsoleReporter) error {
+	// Execute background if present
+	if background != nil {
+		reporter.BackgroundStart()
+		if err := c.executeBackgroundStepsWithReporter(background, reporter); err != nil {
+			// Background failed - skip scenario steps and mark remaining as skipped
+			reporter.ScenarioStart(scenario.Name)
+			for _, step := range scenario.Steps {
+				reporter.StepSkipped(step.Keyword, step.Text)
+				reporter.AddStepResult(false, true)
+			}
+			reporter.AddScenarioResult(false)
+			return nil // Don't return error, continue with next scenario
+		}
+	}
+
+	reporter.ScenarioStart(scenario.Name)
+
+	scenarioPassed := true
+	for i, step := range scenario.Steps {
+		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+			scenarioPassed = false
+			// Skip remaining steps
+			for j := i + 1; j < len(scenario.Steps); j++ {
+				remainingStep := scenario.Steps[j]
+				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reporter.AddStepResult(false, true)
+			}
+			break
+		}
+	}
+
+	reporter.AddScenarioResult(scenarioPassed)
+	return nil
+}
+
+// executeBackgroundStepsWithReporter executes background steps with reporter
+func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages.Background, reporter *cacik.ConsoleReporter) error {
+	for i, step := range background.Steps {
+		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+			// Skip remaining background steps
+			for j := i + 1; j < len(background.Steps); j++ {
+				remainingStep := background.Steps[j]
+				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reporter.AddStepResult(false, true)
+			}
+			return err
+		}
+	}
 	return nil
 }
 
@@ -336,6 +465,17 @@ type documentWithFile struct {
 	file     string
 }
 
+// parseNoColorFromArgs checks if --no-color flag is present in command-line arguments.
+func parseNoColorFromArgs() bool {
+	args := os.Args[1:]
+	for _, arg := range args {
+		if arg == "--no-color" {
+			return true
+		}
+	}
+	return false
+}
+
 // parseParallelFromArgs extracts the parallel worker count from command-line arguments.
 // Supports: --parallel 4 or --parallel=4
 // Returns 1 (sequential) if not specified or invalid.
@@ -483,6 +623,152 @@ func (c *CucumberRunner) executeParallel(scenarios []ScenarioExecution, workers 
 		allResults = append(allResults, r)
 	}
 	return allResults
+}
+
+// executeParallelWithReporter runs scenarios in parallel with buffered reporters
+func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter) []ScenarioResult {
+	type resultWithReporter struct {
+		result   ScenarioResult
+		reporter *cacik.ConsoleReporter
+	}
+
+	jobs := make(chan ScenarioExecution, len(scenarios))
+	results := make(chan resultWithReporter, len(scenarios))
+
+	// Start workers
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for scenario := range jobs {
+				reporter, err := c.executeScenarioWithBufferedReporter(scenario, useColors)
+				results <- resultWithReporter{
+					result: ScenarioResult{
+						Execution: &scenario,
+						Error:     err,
+					},
+					reporter: reporter,
+				}
+			}
+		}()
+	}
+
+	// Send jobs
+	for _, s := range scenarios {
+		jobs <- s
+	}
+	close(jobs)
+
+	// Wait and close results
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and flush output atomically
+	var allResults []ScenarioResult
+	for r := range results {
+		// Flush buffered output atomically
+		r.reporter.Flush()
+		// Merge summary into main reporter
+		mainReporter.MergeSummary(r.reporter)
+		allResults = append(allResults, r.result)
+	}
+	return allResults
+}
+
+// executeScenarioWithBufferedReporter executes a scenario with a buffered reporter
+func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecution, useColors bool) (*cacik.ConsoleReporter, error) {
+	// Create buffered reporter for this scenario
+	reporter := cacik.NewBufferedReporter(useColors)
+
+	// Create fresh context for this scenario
+	opts := make([]cacik.Option, 0)
+	if c.logger != nil {
+		opts = append(opts, cacik.WithLogger(c.logger))
+	}
+	opts = append(opts, cacik.WithReporter(reporter))
+	ctx := cacik.New(opts...)
+
+	// Clone executor and set context
+	isolatedExec := c.executor.Clone()
+	isolatedExec.SetCacikContext(ctx)
+
+	// Print feature header
+	reporter.FeatureStart(exec.FeatureName)
+
+	scenarioPassed := true
+	var execErr error
+
+	// Execute feature background
+	if exec.FeatureBackground != nil {
+		reporter.BackgroundStart()
+		for i, step := range exec.FeatureBackground.Steps {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+				scenarioPassed = false
+				execErr = fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
+				// Skip remaining background steps
+				for j := i + 1; j < len(exec.FeatureBackground.Steps); j++ {
+					remainingStep := exec.FeatureBackground.Steps[j]
+					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+					reporter.AddStepResult(false, true)
+				}
+				// Skip scenario steps
+				reporter.ScenarioStart(exec.Scenario.Name)
+				for _, step := range exec.Scenario.Steps {
+					reporter.StepSkipped(step.Keyword, step.Text)
+					reporter.AddStepResult(false, true)
+				}
+				reporter.AddScenarioResult(false)
+				return reporter, execErr
+			}
+		}
+	}
+
+	// Execute rule background
+	if exec.RuleBackground != nil {
+		reporter.BackgroundStart()
+		for i, step := range exec.RuleBackground.Steps {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+				scenarioPassed = false
+				execErr = fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
+				// Skip remaining background steps
+				for j := i + 1; j < len(exec.RuleBackground.Steps); j++ {
+					remainingStep := exec.RuleBackground.Steps[j]
+					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+					reporter.AddStepResult(false, true)
+				}
+				// Skip scenario steps
+				reporter.ScenarioStart(exec.Scenario.Name)
+				for _, step := range exec.Scenario.Steps {
+					reporter.StepSkipped(step.Keyword, step.Text)
+					reporter.AddStepResult(false, true)
+				}
+				reporter.AddScenarioResult(false)
+				return reporter, execErr
+			}
+		}
+	}
+
+	// Execute scenario steps
+	reporter.ScenarioStart(exec.Scenario.Name)
+	for i, step := range exec.Scenario.Steps {
+		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+			scenarioPassed = false
+			execErr = fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
+			// Skip remaining steps
+			for j := i + 1; j < len(exec.Scenario.Steps); j++ {
+				remainingStep := exec.Scenario.Steps[j]
+				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reporter.AddStepResult(false, true)
+			}
+			break
+		}
+	}
+
+	reporter.AddScenarioResult(scenarioPassed)
+	return reporter, execErr
 }
 
 // formatErrors formats multiple errors into a single error message

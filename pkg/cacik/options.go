@@ -25,3 +25,10 @@ func WithData(data map[string]any) Option {
 		c.data.values = data
 	}
 }
+
+// WithReporter sets the reporter for test output.
+func WithReporter(reporter Reporter) Option {
+	return func(c *Context) {
+		c.reporter = reporter
+	}
+}

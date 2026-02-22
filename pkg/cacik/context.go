@@ -45,10 +45,11 @@ func (d *Data) MustGet(key string) any {
 // Context is the execution context passed to all step functions.
 // It provides logging, assertions, and state management for BDD tests.
 type Context struct {
-	ctx    context.Context
-	logger Logger
-	assert *Assert
-	data   *Data
+	ctx      context.Context
+	logger   Logger
+	assert   *Assert
+	data     *Data
+	reporter Reporter
 }
 
 // New creates a new Context with the given options.
@@ -65,6 +66,9 @@ func New(opts ...Option) *Context {
 	// Set defaults if not provided
 	if c.logger == nil {
 		c.logger = &noopLogger{}
+	}
+	if c.reporter == nil {
+		c.reporter = &noopReporter{}
 	}
 	return c
 }
@@ -93,6 +97,11 @@ func (c *Context) Assert() *Assert {
 // Data returns the data store for scenario-scoped state management.
 func (c *Context) Data() *Data {
 	return c.data
+}
+
+// Reporter returns the reporter for test output.
+func (c *Context) Reporter() Reporter {
+	return c.reporter
 }
 
 // noopLogger discards all log messages.
