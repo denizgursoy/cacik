@@ -3,6 +3,8 @@ package cacik
 
 import (
 	"context"
+	"log/slog"
+	"os"
 )
 
 // Logger is the interface for structured logging within step functions.
@@ -65,7 +67,7 @@ func New(opts ...Option) *Context {
 	}
 	// Set defaults if not provided
 	if c.logger == nil {
-		c.logger = &noopLogger{}
+		c.logger = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	}
 	if c.reporter == nil {
 		c.reporter = &noopReporter{}
