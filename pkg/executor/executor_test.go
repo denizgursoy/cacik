@@ -213,6 +213,7 @@ func TestStepExecutor_Execute_Background(t *testing.T) {
 }
 
 func TestStepExecutor_BoolArgument(t *testing.T) {
+	// parseBool accepts (case-insensitive): true/false, yes/no, on/off, enabled/disabled, 1/0, t/f
 	testCases := []struct {
 		name     string
 		stepText string
@@ -243,6 +244,12 @@ func TestStepExecutor_BoolArgument(t *testing.T) {
 		{"disabled", "it is disabled", false},
 		{"ENABLED (uppercase)", "it is ENABLED", true},
 		{"DISABLED (uppercase)", "it is DISABLED", false},
+
+		// Short form
+		{"t", "it is t", true},
+		{"f", "it is f", false},
+		{"T (uppercase)", "it is T", true},
+		{"F (uppercase)", "it is F", false},
 
 		// Numeric
 		{"1", "it is 1", true},
@@ -645,7 +652,7 @@ func TestStepExecutor_MixedTypes(t *testing.T) {
 
 		// Pattern: {color} owned by {word} is visible {bool}
 		err := exec.RegisterStep(
-			`^((?i:blue|red)) owned by (\w+) is (true|false|yes|no)$`,
+			`^((?i:blue|red)) owned by (\w+) is (yes|no)$`,
 			func(ctx *cacik.Context, color Color, owner string, visible bool) {
 				capturedColor = color
 				capturedOwner = owner
@@ -662,7 +669,7 @@ func TestStepExecutor_MixedTypes(t *testing.T) {
 		require.Equal(t, "Alice", capturedOwner)
 		require.True(t, capturedVisible)
 
-		doc = createDocument("blue owned by Bob is false")
+		doc = createDocument("blue owned by Bob is no")
 		err = exec.Execute(doc)
 		require.NoError(t, err)
 		require.Equal(t, Color("blue"), capturedColor)

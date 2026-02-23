@@ -516,9 +516,9 @@ func TestAssertions_WithMessage(t *testing.T) {
 // Default implementations tests
 // =============================================================================
 
-func TestNoopLogger(t *testing.T) {
-	t.Run("does not panic", func(t *testing.T) {
-		ctx := New() // Uses noopLogger by default
+func TestDefaultLogger(t *testing.T) {
+	t.Run("uses slog by default and does not panic", func(t *testing.T) {
+		ctx := New() // Uses slog by default
 		require.NotPanics(t, func() {
 			ctx.Logger().Debug("test")
 			ctx.Logger().Info("test")

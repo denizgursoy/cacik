@@ -327,6 +327,9 @@ var builtInTypes = map[string]string{
 	"":       `(.*)`,          // Empty name matches anything
 	"any":    `(.*)`,          // Explicit any matches anything
 
+	// Boolean: matches true/false, yes/no, on/off, enabled/disabled, 1/0, t/f (case-insensitive)
+	"bool": `(?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)`,
+
 	// Timezone formats:
 	// - Z (UTC)
 	// - Offset: +05:30, -08:00, +0530, -0800

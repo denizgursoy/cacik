@@ -580,16 +580,19 @@ func convertPrimitive(arg string, targetType reflect.Type) (reflect.Value, error
 	}
 }
 
+// =============================================================================
+// Boolean Parsing
+// =============================================================================
+
 // parseBool converts a string to a boolean value.
-// It supports human-readable values in addition to standard bool strings.
-// Truthy values: true, yes, on, enabled, 1
-// Falsy values: false, no, off, disabled, 0
-// All comparisons are case-insensitive.
+// Supports human-readable values (case-insensitive):
+// Truthy: true, yes, on, enabled, 1, t
+// Falsy: false, no, off, disabled, 0, f
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(s) {
-	case "true", "yes", "on", "enabled", "1":
+	case "true", "yes", "on", "enabled", "1", "t":
 		return true, nil
-	case "false", "no", "off", "disabled", "0":
+	case "false", "no", "off", "disabled", "0", "f":
 		return false, nil
 	default:
 		return false, fmt.Errorf("cannot parse %q as bool", s)

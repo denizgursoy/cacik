@@ -51,6 +51,7 @@ Cacik supports Cucumber-style parameter placeholders:
 | `{word}` | `string` | Single word (no spaces) | `hello`, `test123` |
 | `{string}` | `string` | Double-quoted string | `"hello world"` |
 | `{any}` or `{}` | `string` | Matches anything | `anything here` |
+| `{bool}` | `bool` | Boolean value | `true`, `false`, `1`, `0` |
 | `{time}` | `time.Time` | Time values (zero date) | `14:30`, `2:30pm`, `14:30 Europe/London` |
 | `{date}` | `time.Time` | Date values (midnight) | `15/01/2024`, `2024-01-15`, `15 Jan 2024` |
 | `{datetime}` | `time.Time` | Date and time | `2024-01-15 14:30`, `2024-01-15T14:30:00Z` |
@@ -116,6 +117,11 @@ func WaitFor(ctx *cacik.Context, d time.Duration) {
 func NavigateTo(ctx *cacik.Context, u *url.URL) {
     ctx.Logger().Info("navigating", "url", u.String())
 }
+
+// @cacik `^the feature is {bool}$`
+func FeatureEnabled(ctx *cacik.Context, enabled bool) {
+    ctx.Logger().Info("feature state", "enabled", enabled)
+}
 ```
 
 Feature file:
@@ -135,6 +141,7 @@ Feature: Built-in types
     And user john@example.com logged in
     And wait for 5s
     And navigate to https://example.com/api
+    And the feature is true
 ```
 
 ### Time, Date, DateTime, and Timezone Formats
@@ -219,7 +226,7 @@ func IHaveApples(ctx *cacik.Context, count int) {
 
 ### Boolean Values
 
-Boolean parameters support human-readable values (case-insensitive):
+Use `{bool}` placeholder for boolean parameters. Accepts human-readable values (case-insensitive):
 
 | Truthy | Falsy |
 |--------|-------|
@@ -228,12 +235,13 @@ Boolean parameters support human-readable values (case-insensitive):
 | `on` | `off` |
 | `enabled` | `disabled` |
 | `1` | `0` |
+| `t` | `f` |
 
 Example:
 
 ```go
 // FeatureToggle handles feature state
-// @cacik `^the feature is (enabled|disabled)$`
+// @cacik `^the feature is {bool}$`
 func FeatureToggle(ctx *cacik.Context, enabled bool) {
     ctx.Logger().Info("feature toggled", "enabled", enabled)
 }
@@ -247,6 +255,12 @@ Feature: Feature toggles
 
   Scenario: Disable feature
     Given the feature is disabled
+
+  Scenario: Turn on
+    Given the feature is on
+
+  Scenario: Using yes/no
+    Given the feature is yes
 ```
 
 ### Custom Parameter Types
