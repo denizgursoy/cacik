@@ -43,9 +43,9 @@ func TestGetComments(t *testing.T) {
 		require.Equal(t, "^step 2$", stepMap["Step2"])
 		require.Equal(t, "^I have (\\d+) apples$", stepMap["IGetApples"])
 
-		// Bool step definitions
-		require.Equal(t, "^it is (true|false|yes|no|on|off|enabled|disabled)$", stepMap["ItIs"])
-		require.Equal(t, "^the feature is (enabled|disabled)$", stepMap["FeatureToggle"])
+		// Bool step definitions - {bool} transforms to case-insensitive pattern
+		require.Equal(t, "^it is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["ItIs"])
+		require.Equal(t, "^the feature is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["FeatureToggle"])
 
 		// Custom type step definitions - Color (string-based)
 		// {color} should be transformed to (blue|green|red) - sorted alphabetically
