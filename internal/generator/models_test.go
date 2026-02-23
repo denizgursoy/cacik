@@ -9,9 +9,17 @@ import (
 
 var (
 	data = Output{
-		ConfigFunction: &FunctionLocator{
-			FullPackageName: "a",
-			FunctionName:    "ConfigFunction",
+		ConfigFunctions: []*FunctionLocator{
+			{
+				FullPackageName: "a",
+				FunctionName:    "ConfigFunction",
+			},
+		},
+		HooksFunctions: []*FunctionLocator{
+			{
+				FullPackageName: "b",
+				FunctionName:    "HooksFunction",
+			},
 		},
 		StepFunctions: []*StepFunctionLocator{
 			{
@@ -35,6 +43,8 @@ var (
 
 import (
 	a "a"
+	b "b"
+	cacik "github.com/denizgursoy/cacik/pkg/cacik"
 	runner "github.com/denizgursoy/cacik/pkg/runner"
 	"log"
 	package1 "package1"
@@ -42,12 +52,14 @@ import (
 )
 
 func main() {
+	config := cacik.MergeConfigs(a.ConfigFunction())
+	hooks := []*cacik.Hooks{b.HooksFunction()}
 	err := runner.NewCucumberRunner().
-		WithConfigFunc(a.ConfigFunction).
+		WithConfig(config).
+		WithHooks(hooks...).
 		RegisterStep("^step 1$", package1.Step1Function).
 		RegisterStep("^step 2$", package2.Step2Function).
 		Run()
-
 	if err != nil {
 		log.Fatal(err)
 	}

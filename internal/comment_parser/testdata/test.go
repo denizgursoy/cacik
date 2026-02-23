@@ -1,8 +1,21 @@
 package testdata
 
-import "github.com/denizgursoy/cacik/pkg/models"
+import "github.com/denizgursoy/cacik/pkg/cacik"
 
-// Hello
-func Method1() *models.Config {
-	return &models.Config{}
+// MyConfig returns configuration settings
+func MyConfig() *cacik.Config {
+	return &cacik.Config{
+		Parallel: 4,
+		FailFast: true,
+	}
+}
+
+// MyHooks returns lifecycle hooks
+func MyHooks() *cacik.Hooks {
+	return &cacik.Hooks{
+		Order: 10,
+		BeforeAll: func() {
+			// setup
+		},
+	}
 }

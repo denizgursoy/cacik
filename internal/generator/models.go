@@ -29,9 +29,10 @@ type (
 	}
 
 	Output struct {
-		ConfigFunction *FunctionLocator
-		StepFunctions  []*StepFunctionLocator
-		CustomTypes    map[string]*CustomType // lowercase type name -> CustomType
+		ConfigFunctions []*FunctionLocator // Functions returning *cacik.Config
+		HooksFunctions  []*FunctionLocator // Functions returning *cacik.Hooks
+		StepFunctions   []*StepFunctionLocator
+		CustomTypes     map[string]*CustomType // lowercase type name -> CustomType
 	}
 )
 
@@ -97,10 +98,41 @@ func regexEscape(s string) string {
 func (o *Output) Generate(writer io.Writer) error {
 	mainFile := jen.NewFile("main")
 
-	functionBody := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
+	var statements []jen.Code
 
-	if o.ConfigFunction != nil {
-		functionBody.Id("WithConfigFunc").Call(jen.Qual(o.ConfigFunction.FullPackageName, o.ConfigFunction.FunctionName)).Id(".").Line()
+	// Collect configs: configs := cacik.MergeConfigs(...)
+	if len(o.ConfigFunctions) > 0 {
+		configCalls := make([]jen.Code, 0, len(o.ConfigFunctions))
+		for _, cf := range o.ConfigFunctions {
+			configCalls = append(configCalls, jen.Qual(cf.FullPackageName, cf.FunctionName).Call())
+		}
+		statements = append(statements,
+			jen.Id("config").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/cacik", "MergeConfigs").Call(configCalls...),
+		)
+	}
+
+	// Collect hooks: hooks := []*cacik.Hooks{...}
+	if len(o.HooksFunctions) > 0 {
+		hooksCalls := make([]jen.Code, 0, len(o.HooksFunctions))
+		for _, hf := range o.HooksFunctions {
+			hooksCalls = append(hooksCalls, jen.Qual(hf.FullPackageName, hf.FunctionName).Call())
+		}
+		statements = append(statements,
+			jen.Id("hooks").Op(":=").Index().Op("*").Qual("github.com/denizgursoy/cacik/pkg/cacik", "Hooks").Values(hooksCalls...),
+		)
+	}
+
+	// Build runner chain
+	runnerChain := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
+
+	// Add WithConfig if we have configs
+	if len(o.ConfigFunctions) > 0 {
+		runnerChain.Id("WithConfig").Call(jen.Id("config")).Id(".").Line()
+	}
+
+	// Add WithHooks if we have hooks
+	if len(o.HooksFunctions) > 0 {
+		runnerChain.Id("WithHooks").Call(jen.Id("hooks").Op("...")).Id(".").Line()
 	}
 
 	// Register custom types before steps
@@ -112,22 +144,30 @@ func (o *Output) Generate(writer io.Writer) error {
 			}
 		}))
 
-		functionBody.Id("RegisterCustomType").Call(
+		runnerChain.Id("RegisterCustomType").Call(
 			jen.Lit(ct.Name),
 			jen.Lit(ct.Underlying),
 			valuesMap,
 		).Id(".").Line()
 	}
 
+	// Register steps
 	for _, function := range o.StepFunctions {
-		functionBody.Id("RegisterStep").Call(jen.Lit(function.StepName), jen.Qual(function.FullPackageName, function.FunctionName)).Id(".").Line()
+		runnerChain.Id("RegisterStep").Call(jen.Lit(function.StepName), jen.Qual(function.FullPackageName, function.FunctionName)).Id(".").Line()
 	}
-	functionBody.Id("Run").Call().Line().Line()
-	functionBody.If(jen.Id("err").Op("!=").Nil()).Block(
-		jen.Qual("log", "Fatal").Call(jen.Id("err")),
+
+	runnerChain.Id("Run").Call()
+
+	statements = append(statements, runnerChain)
+
+	// Error handling
+	statements = append(statements,
+		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Qual("log", "Fatal").Call(jen.Id("err")),
+		),
 	)
 
-	mainFile.Func().Id("main").Params().Block(functionBody)
+	mainFile.Func().Id("main").Params().Block(statements...)
 
 	_, err := writer.Write([]byte(mainFile.GoString()))
 

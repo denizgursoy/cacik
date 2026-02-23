@@ -11,28 +11,7 @@ import (
 )
 
 var (
-	expectedOutput = &generator.Output{
-		ConfigFunction: &generator.FunctionLocator{
-			FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata",
-			FunctionName:    "Method1",
-		},
-		StepFunctions: []*generator.StepFunctionLocator{
-			{
-				StepName: "^step 1$",
-				FunctionLocator: &generator.FunctionLocator{
-					FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata/step-one",
-					FunctionName:    "Step1",
-				},
-			},
-			{
-				StepName: "^step 2$",
-				FunctionLocator: &generator.FunctionLocator{
-					FullPackageName: "github.com/denizgursoy/cacik/internal/parser/testdata/step-two",
-					FunctionName:    "Step2",
-				},
-			},
-		},
-	}
+	_ = &generator.Output{} // Ensure generator.Output is used
 )
 
 func TestGetComments(t *testing.T) {
@@ -47,8 +26,12 @@ func TestGetComments(t *testing.T) {
 		require.Nil(t, err)
 
 		// Check that config function is found
-		require.NotNil(t, recursively.ConfigFunction)
-		require.Equal(t, "Method1", recursively.ConfigFunction.FunctionName)
+		require.Len(t, recursively.ConfigFunctions, 1)
+		require.Equal(t, "MyConfig", recursively.ConfigFunctions[0].FunctionName)
+
+		// Check that hooks function is found
+		require.Len(t, recursively.HooksFunctions, 1)
+		require.Equal(t, "MyHooks", recursively.HooksFunctions[0].FunctionName)
 
 		// Check that step functions are found (order may vary)
 		stepMap := make(map[string]string)

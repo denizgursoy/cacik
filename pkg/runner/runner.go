@@ -15,12 +15,12 @@ import (
 	"github.com/denizgursoy/cacik/pkg/cacik"
 	"github.com/denizgursoy/cacik/pkg/executor"
 	"github.com/denizgursoy/cacik/pkg/gherkin_parser"
-	"github.com/denizgursoy/cacik/pkg/models"
 )
 
 type (
 	CucumberRunner struct {
-		config             *models.Config
+		config             *cacik.Config
+		hooks              []*cacik.Hooks
 		featureDirectories []string
 		executor           *executor.StepExecutor
 		logger             cacik.Logger
@@ -41,11 +41,17 @@ func NewCucumberRunnerWithExecutor(exec *executor.StepExecutor) *CucumberRunner 
 	}
 }
 
-func (c *CucumberRunner) WithConfigFunc(configFunction func() *models.Config) *CucumberRunner {
-	if configFunction != nil {
-		c.config = configFunction()
-	}
+// WithConfig sets the configuration for the runner.
+// CLI flags (--parallel, --fail-fast, --no-color) override config values.
+func (c *CucumberRunner) WithConfig(config *cacik.Config) *CucumberRunner {
+	c.config = config
+	return c
+}
 
+// WithHooks sets the lifecycle hooks for the runner.
+// All hooks are executed in order sorted by their Order field.
+func (c *CucumberRunner) WithHooks(hooks ...*cacik.Hooks) *CucumberRunner {
+	c.hooks = append(c.hooks, hooks...)
 	return c
 }
 
@@ -93,8 +99,22 @@ func (c *CucumberRunner) Run() error {
 		c.featureDirectories = append(c.featureDirectories, ".")
 	}
 
-	// Parse parallel worker count from CLI arguments
-	workers := parseParallelFromArgs()
+	// Apply config with CLI overrides
+	workers, failFast, useColors := c.resolveSettings()
+
+	// Apply logger from config
+	if c.config != nil && c.config.Logger != nil {
+		c.logger = c.config.Logger
+	}
+
+	// Create hook executor
+	hookExecutor := cacik.NewHookExecutor(c.hooks...)
+
+	// Execute BeforeAll hooks
+	hookExecutor.ExecuteBeforeAll()
+
+	// Ensure AfterAll hooks run even on error
+	defer hookExecutor.ExecuteAfterAll()
 
 	// Parse tag expression from CLI arguments
 	tagExpr := parseTagsFromArgs()
@@ -144,10 +164,6 @@ func (c *CucumberRunner) Run() error {
 			return nil
 		}
 
-		// Parse flags
-		useColors := !parseNoColorFromArgs()
-		failFast := parseFailFastFromArgs()
-
 		// Create main reporter for summary aggregation
 		mainReporter := cacik.NewConsoleReporter(useColors)
 
@@ -172,10 +188,6 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Sequential execution (original behavior)
-	// Parse flags
-	useColors := !parseNoColorFromArgs()
-	failFast := parseFailFastFromArgs()
-
 	// Create reporter
 	reporter := cacik.NewConsoleReporter(useColors)
 
@@ -187,6 +199,9 @@ func (c *CucumberRunner) Run() error {
 	opts = append(opts, cacik.WithReporter(reporter))
 	ctx := cacik.New(opts...)
 	c.executor.SetCacikContext(ctx)
+
+	// Store hook executor in runner for step hooks
+	c.executor.SetHookExecutor(hookExecutor)
 
 	// Execute documents with reporter lifecycle calls
 	var runErr error
@@ -320,6 +335,32 @@ func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages
 		}
 	}
 	return nil
+}
+
+// resolveSettings resolves runtime settings from config and CLI flags.
+// CLI flags always override config values.
+func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColors bool) {
+	// Start with config values (if any)
+	if c.config != nil {
+		workers = c.config.Parallel
+		failFast = c.config.FailFast
+		useColors = !c.config.NoColor
+	} else {
+		useColors = true // default to colors
+	}
+
+	// CLI overrides
+	if cliWorkers := parseParallelFromArgs(); cliWorkers > 0 {
+		workers = cliWorkers
+	}
+	if parseFailFastFromArgs() {
+		failFast = true
+	}
+	if parseNoColorFromArgs() {
+		useColors = false
+	}
+
+	return workers, failFast, useColors
 }
 
 // parseTagsFromArgs extracts the tag expression from command-line arguments.

@@ -646,21 +646,99 @@ go run . --tags "@billing"
 go run . --tags "@billing and @smoke"
 ```
 
-## Configuration and Hooks
+## Configuration
 
-You can configure hooks by creating a config function:
+Cacik automatically discovers functions returning `*cacik.Config` for runtime settings. CLI flags always override config values.
 
 ```go
 package mysteps
 
-import "github.com/denizgursoy/cacik/pkg/models"
+import "github.com/denizgursoy/cacik/pkg/cacik"
 
-func GetConfig() *models.Config {
-	return &models.Config{
-		BeforeAll:  func() { /* setup */ },
-		AfterAll:   func() { /* teardown */ },
-		BeforeStep: func() { /* before each step */ },
-		AfterStep:  func() { /* after each step */ },
+// MyConfig returns runtime configuration
+func MyConfig() *cacik.Config {
+	return &cacik.Config{
+		Parallel: 4,            // Number of parallel workers (0 = sequential)
+		FailFast: true,         // Stop on first failure
+		NoColor:  false,        // Colored output (default: true)
+		Logger:   customLogger, // Custom logger (default: slog)
 	}
 }
 ```
+
+### Config Fields
+
+| Field | Type | Description | CLI Override |
+|-------|------|-------------|--------------|
+| `Parallel` | `int` | Number of parallel workers (0 = sequential) | `--parallel N` |
+| `FailFast` | `bool` | Stop execution on first failure | `--fail-fast` |
+| `NoColor` | `bool` | Disable colored output | `--no-color` |
+| `Logger` | `cacik.Logger` | Custom logger (default: slog to stdout) | - |
+
+Multiple config functions are merged (last wins for conflicts).
+
+## Hooks
+
+Cacik automatically discovers functions returning `*cacik.Hooks` for lifecycle hooks. ALL discovered hooks are executed, sorted by their `Order` field.
+
+```go
+package database
+
+import "github.com/denizgursoy/cacik/pkg/cacik"
+
+// DatabaseHooks sets up database connection
+func DatabaseHooks() *cacik.Hooks {
+	return &cacik.Hooks{
+		Order: 10, // Lower = runs first (default: 0)
+		BeforeAll: func() {
+			// Setup database connection (runs once before all scenarios)
+		},
+		AfterAll: func() {
+			// Close database connection (runs once after all scenarios)
+		},
+		BeforeStep: func() {
+			// Runs before each step
+		},
+		AfterStep: func() {
+			// Runs after each step
+		},
+	}
+}
+```
+
+```go
+package api
+
+import "github.com/denizgursoy/cacik/pkg/cacik"
+
+// APIHooks sets up mock API server
+func APIHooks() *cacik.Hooks {
+	return &cacik.Hooks{
+		Order: 20, // Runs after DatabaseHooks (Order: 10)
+		BeforeAll: func() {
+			// Start mock API server (needs database)
+		},
+		AfterAll: func() {
+			// Stop mock API server
+		},
+	}
+}
+```
+
+### Hook Execution Order
+
+1. **BeforeAll**: All hooks execute in `Order` ascending (0, 10, 20, ...)
+2. **BeforeStep**: All hooks execute in `Order` ascending (before each step)
+3. Step executes
+4. **AfterStep**: All hooks execute in `Order` ascending (after each step)
+5. **AfterAll**: All hooks execute in `Order` ascending (after all scenarios)
+
+### Hooks Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Order` | `int` | Execution order (lower = first, default: 0) |
+| `BeforeAll` | `func()` | Runs once before all scenarios |
+| `AfterAll` | `func()` | Runs once after all scenarios |
+| `BeforeStep` | `func()` | Runs before each step |
+| `AfterStep` | `func()` | Runs after each step |

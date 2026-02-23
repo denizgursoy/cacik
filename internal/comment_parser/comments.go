@@ -51,9 +51,10 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 	directories = append(directories, parentDirectory)
 
 	output := &generator.Output{
-		ConfigFunction: nil,
-		StepFunctions:  make([]*generator.StepFunctionLocator, 0),
-		CustomTypes:    make(map[string]*generator.CustomType),
+		ConfigFunctions: make([]*generator.FunctionLocator, 0),
+		HooksFunctions:  make([]*generator.FunctionLocator, 0),
+		StepFunctions:   make([]*generator.StepFunctionLocator, 0),
+		CustomTypes:     make(map[string]*generator.CustomType),
 	}
 
 	allPackages := make(map[string]*ast.Package)
@@ -101,10 +102,15 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 
 					step, isStepFunction := IsStepFunction(decl)
 					if IsConfigFunction(decl, node.Imports) {
-						output.ConfigFunction = &generator.FunctionLocator{
+						output.ConfigFunctions = append(output.ConfigFunctions, &generator.FunctionLocator{
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
-						}
+						})
+					} else if IsHooksFunction(decl, node.Imports) {
+						output.HooksFunctions = append(output.HooksFunctions, &generator.FunctionLocator{
+							FullPackageName: importPathOfFuncDecl,
+							FunctionName:    decl.Name.Name,
+						})
 					} else if isStepFunction {
 						// Transform {param} syntax to regex
 						transformedStep, err := transformStepPattern(*step, output.CustomTypes)
@@ -415,7 +421,18 @@ func transformStepPattern(pattern string, customTypes map[string]*generator.Cust
 	return result, nil
 }
 
+// IsConfigFunction checks if the function returns *cacik.Config
 func IsConfigFunction(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec) bool {
+	return checkReturnType(fnDecl, imports, "*cacik.Config")
+}
+
+// IsHooksFunction checks if the function returns *cacik.Hooks
+func IsHooksFunction(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec) bool {
+	return checkReturnType(fnDecl, imports, "*cacik.Hooks")
+}
+
+// checkReturnType checks if function returns a specific type
+func checkReturnType(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec, expectedType string) bool {
 	if fnDecl.Type.Results == nil {
 		return false
 	}
@@ -423,10 +440,9 @@ func IsConfigFunction(fnDecl *ast.FuncDecl, imports []*ast.ImportSpec) bool {
 	if len(returnedTypes) != 1 {
 		return false
 	}
-	fmt.Printf("Analyzing function %s:\n", fnDecl.Name.Name)
 	e := returnedTypes[0].Type
 	path := analyzeExpr(e, imports)
-	return strings.HasSuffix(path, "Config")
+	return strings.HasSuffix(path, expectedType)
 }
 
 func IsStepFunction(decl *ast.FuncDecl) (*string, bool) {

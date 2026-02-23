@@ -87,10 +87,11 @@ func (c *CustomTypeInfo) AllowedValuesList() []string {
 
 // StepExecutor handles matching and executing step definitions
 type StepExecutor struct {
-	steps       []StepDefinition
-	patternSet  map[string]bool            // Track registered patterns for duplicate detection
-	customTypes map[string]*CustomTypeInfo // type name -> custom type info
-	cacikCtx    *cacik.Context             // Cacik context for step functions
+	steps        []StepDefinition
+	patternSet   map[string]bool            // Track registered patterns for duplicate detection
+	customTypes  map[string]*CustomTypeInfo // type name -> custom type info
+	cacikCtx     *cacik.Context             // Cacik context for step functions
+	hookExecutor *cacik.HookExecutor        // Hook executor for BeforeStep/AfterStep
 }
 
 // NewStepExecutor creates a new StepExecutor
@@ -116,11 +117,17 @@ func (e *StepExecutor) GetCacikContext() *cacik.Context {
 // Clone creates a copy of the executor with fresh context but shared step definitions
 func (e *StepExecutor) Clone() *StepExecutor {
 	return &StepExecutor{
-		steps:       e.steps,       // Share step definitions (read-only)
-		patternSet:  e.patternSet,  // Share pattern set (read-only)
-		customTypes: e.customTypes, // Share custom types (read-only)
-		cacikCtx:    nil,           // Will be set per-scenario
+		steps:        e.steps,        // Share step definitions (read-only)
+		patternSet:   e.patternSet,   // Share pattern set (read-only)
+		customTypes:  e.customTypes,  // Share custom types (read-only)
+		cacikCtx:     nil,            // Will be set per-scenario
+		hookExecutor: e.hookExecutor, // Share hook executor
 	}
+}
+
+// SetHookExecutor sets the hook executor for BeforeStep/AfterStep hooks
+func (e *StepExecutor) SetHookExecutor(he *cacik.HookExecutor) {
+	e.hookExecutor = he
 }
 
 // RegisterCustomType registers a custom type with its allowed values
@@ -242,6 +249,11 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 		// Extract capture groups (skip the full match at index 0)
 		capturedArgs := matches[1:]
 
+		// Execute BeforeStep hooks
+		if e.hookExecutor != nil {
+			e.hookExecutor.ExecuteBeforeStep()
+		}
+
 		// Execute step with panic recovery for reporter
 		var stepErr error
 		var panicMsg string
@@ -254,6 +266,11 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 			}()
 			stepErr = e.invokeStepFunction(stepDef.Function, capturedArgs)
 		}()
+
+		// Execute AfterStep hooks
+		if e.hookExecutor != nil {
+			e.hookExecutor.ExecuteAfterStep()
+		}
 
 		// Report step result
 		if e.cacikCtx != nil {
