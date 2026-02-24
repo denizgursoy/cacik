@@ -125,13 +125,13 @@ func (c *Context) TestingT() T {
 	return c.t
 }
 
-// noopLogger discards all log messages.
-type noopLogger struct{}
+// NoopLogger discards all log messages.
+type NoopLogger struct{}
 
-func (n *noopLogger) Debug(msg string, args ...any) {}
-func (n *noopLogger) Info(msg string, args ...any)  {}
-func (n *noopLogger) Warn(msg string, args ...any)  {}
-func (n *noopLogger) Error(msg string, args ...any) {}
+func (n *NoopLogger) Debug(msg string, args ...any) {}
+func (n *NoopLogger) Info(msg string, args ...any)  {}
+func (n *NoopLogger) Warn(msg string, args ...any)  {}
+func (n *NoopLogger) Error(msg string, args ...any) {}
 
 // panicT panics on test failure. Used as fallback when *testing.T is not provided.
 type panicT struct {

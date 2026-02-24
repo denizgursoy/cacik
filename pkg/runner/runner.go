@@ -110,11 +110,16 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Apply config with CLI overrides
-	workers, failFast, useColors := c.resolveSettings()
+	workers, failFast, useColors, disableLog, disableReporter := c.resolveSettings()
 
 	// Apply logger from config
 	if c.config != nil && c.config.Logger != nil {
 		c.logger = c.config.Logger
+	}
+
+	// If DisableLog is set, replace logger with a no-op logger
+	if disableLog {
+		c.logger = &cacik.NoopLogger{}
 	}
 
 	// Create hook executor
@@ -168,7 +173,7 @@ func (c *CucumberRunner) Run() error {
 
 	// If *testing.T is set, use t.Run() subtests
 	if c.t != nil {
-		return c.runWithTestingT(docs, workers, failFast, useColors, hookExecutor)
+		return c.runWithTestingT(docs, workers, failFast, useColors, disableReporter, hookExecutor)
 	}
 
 	// If parallel execution is requested
@@ -180,10 +185,15 @@ func (c *CucumberRunner) Run() error {
 		}
 
 		// Create main reporter for summary aggregation
-		mainReporter := cacik.NewConsoleReporter(useColors)
+		var mainReporter *cacik.ConsoleReporter
+		if disableReporter {
+			mainReporter = cacik.NewNoopConsoleReporter()
+		} else {
+			mainReporter = cacik.NewConsoleReporter(useColors)
+		}
 
 		// Execute in parallel with buffered reporters
-		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter, failFast)
+		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter, failFast, disableReporter)
 
 		// Print summary
 		mainReporter.PrintSummary()
@@ -204,7 +214,12 @@ func (c *CucumberRunner) Run() error {
 
 	// Sequential execution (original behavior)
 	// Create reporter
-	reporter := cacik.NewConsoleReporter(useColors)
+	var reporter *cacik.ConsoleReporter
+	if disableReporter {
+		reporter = cacik.NewNoopConsoleReporter()
+	} else {
+		reporter = cacik.NewConsoleReporter(useColors)
+	}
 
 	// Set up cacik context with logger and reporter
 	opts := make([]cacik.Option, 0)
@@ -235,7 +250,7 @@ func (c *CucumberRunner) Run() error {
 
 // runWithTestingT executes scenarios using t.Run() subtests.
 // Each scenario becomes a Go subtest, and parallel scenarios use t.Parallel().
-func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, failFast bool, useColors bool, hookExecutor *cacik.HookExecutor) error {
+func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, failFast bool, useColors bool, disableReporter bool, hookExecutor *cacik.HookExecutor) error {
 	// Collect all scenarios from filtered documents
 	scenarios := c.collectScenarios(docs)
 	if len(scenarios) == 0 {
@@ -245,7 +260,12 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 	parallel := workers > 1
 
 	// Create main reporter for summary aggregation
-	mainReporter := cacik.NewConsoleReporter(useColors)
+	var mainReporter *cacik.ConsoleReporter
+	if disableReporter {
+		mainReporter = cacik.NewNoopConsoleReporter()
+	} else {
+		mainReporter = cacik.NewConsoleReporter(useColors)
+	}
 
 	for _, scenario := range scenarios {
 		scenario := scenario // capture loop variable
@@ -259,7 +279,9 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			// For parallel: use buffered reporter per subtest to avoid interleaved output.
 			// For sequential: use the main reporter directly (prints immediately).
 			var reporter *cacik.ConsoleReporter
-			if parallel {
+			if disableReporter {
+				reporter = cacik.NewNoopConsoleReporter()
+			} else if parallel {
 				reporter = cacik.NewBufferedReporter(useColors)
 				defer func() {
 					reporter.Flush()
@@ -483,12 +505,14 @@ func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages
 
 // resolveSettings resolves runtime settings from config and CLI flags.
 // CLI flags always override config values.
-func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColors bool) {
+func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColors bool, disableLog bool, disableReporter bool) {
 	// Start with config values (if any)
 	if c.config != nil {
 		workers = c.config.Parallel
 		failFast = c.config.FailFast
 		useColors = !c.config.NoColor
+		disableLog = c.config.DisableLog
+		disableReporter = c.config.DisableReporter
 	} else {
 		useColors = true // default to colors
 	}
@@ -503,8 +527,14 @@ func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColor
 	if parseNoColorFromArgs() {
 		useColors = false
 	}
+	if parseDisableLogFromArgs() {
+		disableLog = true
+	}
+	if parseDisableReporterFromArgs() {
+		disableReporter = true
+	}
 
-	return workers, failFast, useColors
+	return workers, failFast, useColors, disableLog, disableReporter
 }
 
 // parseTagsFromArgs extracts the tag expression from command-line arguments.
@@ -676,6 +706,28 @@ func parseNoColorFromArgs() bool {
 	return false
 }
 
+// parseDisableLogFromArgs checks if --disable-log flag is present in command-line arguments.
+func parseDisableLogFromArgs() bool {
+	args := os.Args[1:]
+	for _, arg := range args {
+		if arg == "--disable-log" {
+			return true
+		}
+	}
+	return false
+}
+
+// parseDisableReporterFromArgs checks if --disable-reporter flag is present in command-line arguments.
+func parseDisableReporterFromArgs() bool {
+	args := os.Args[1:]
+	for _, arg := range args {
+		if arg == "--disable-reporter" {
+			return true
+		}
+	}
+	return false
+}
+
 // parseFailFastFromArgs checks if --fail-fast flag is present in command-line arguments.
 func parseFailFastFromArgs() bool {
 	args := os.Args[1:]
@@ -837,7 +889,7 @@ func (c *CucumberRunner) executeParallel(scenarios []ScenarioExecution, workers 
 }
 
 // executeParallelWithReporter runs scenarios in parallel with buffered reporters
-func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter, failFast bool) []ScenarioResult {
+func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter, failFast bool, disableReporter bool) []ScenarioResult {
 	type resultWithReporter struct {
 		result   ScenarioResult
 		reporter *cacik.ConsoleReporter
@@ -862,7 +914,7 @@ func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecuti
 					continue
 				}
 
-				reporter, err := c.executeScenarioWithBufferedReporter(scenario, useColors)
+				reporter, err := c.executeScenarioWithBufferedReporter(scenario, useColors, disableReporter)
 
 				// Mark as failed if this scenario failed
 				if err != nil && failFast {
@@ -905,9 +957,14 @@ func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecuti
 }
 
 // executeScenarioWithBufferedReporter executes a scenario with a buffered reporter
-func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecution, useColors bool) (*cacik.ConsoleReporter, error) {
+func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecution, useColors bool, disableReporter bool) (*cacik.ConsoleReporter, error) {
 	// Create buffered reporter for this scenario
-	reporter := cacik.NewBufferedReporter(useColors)
+	var reporter *cacik.ConsoleReporter
+	if disableReporter {
+		reporter = cacik.NewNoopConsoleReporter()
+	} else {
+		reporter = cacik.NewBufferedReporter(useColors)
+	}
 
 	// Create fresh context for this scenario
 	opts := make([]cacik.Option, 0)

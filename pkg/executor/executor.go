@@ -249,6 +249,14 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 		// Extract capture groups (skip the full match at index 0)
 		capturedArgs := matches[1:]
 
+		// Compute capture group byte positions for reporter highlighting.
+		// FindStringSubmatchIndex returns [full_start, full_end, grp1_start, grp1_end, ...].
+		// We strip the first pair (full match) so matchLocs = [grp1_start, grp1_end, ...].
+		var matchLocs []int
+		if idxMatches := stepDef.Pattern.FindStringSubmatchIndex(stepText); len(idxMatches) > 2 {
+			matchLocs = idxMatches[2:] // skip full-match pair
+		}
+
 		// Execute BeforeStep hooks
 		if e.hookExecutor != nil {
 			e.hookExecutor.ExecuteBeforeStep()
@@ -293,10 +301,10 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 				if errMsg == "" && stepErr != nil {
 					errMsg = stepErr.Error()
 				}
-				reporter.StepFailed(keyword, stepText, errMsg)
+				reporter.StepFailed(keyword, stepText, errMsg, matchLocs)
 				reporter.AddStepResult(false, false)
 			} else {
-				reporter.StepPassed(keyword, stepText)
+				reporter.StepPassed(keyword, stepText, matchLocs)
 				reporter.AddStepResult(true, false)
 			}
 		}
@@ -307,7 +315,7 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 	// No matching step found
 	errMsg := fmt.Sprintf("no matching step definition found for: %s", stepText)
 	if e.cacikCtx != nil {
-		e.cacikCtx.Reporter().StepFailed(keyword, stepText, errMsg)
+		e.cacikCtx.Reporter().StepFailed(keyword, stepText, errMsg, nil)
 		e.cacikCtx.Reporter().AddStepResult(false, false)
 	}
 	return fmt.Errorf("%s", errMsg)

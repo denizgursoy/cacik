@@ -664,10 +664,12 @@ import "github.com/denizgursoy/cacik/pkg/cacik"
 // MyConfig returns runtime configuration
 func MyConfig() *cacik.Config {
 	return &cacik.Config{
-		Parallel: 4,            // Number of parallel workers (0 = sequential)
-		FailFast: true,         // Stop on first failure
-		NoColor:  false,        // Colored output (default: true)
-		Logger:   customLogger, // Custom logger (default: slog)
+		Parallel:        4,            // Number of parallel workers (0 = sequential)
+		FailFast:        true,         // Stop on first failure
+		NoColor:         false,        // Colored output (default: true)
+		DisableLog:      false,        // Logger (ctx.Logger()) enabled (default: false)
+		DisableReporter: false,        // Reporter output enabled (default: false)
+		Logger:          customLogger, // Custom logger (default: slog)
 	}
 }
 ```
@@ -679,6 +681,8 @@ func MyConfig() *cacik.Config {
 | `Parallel` | `int` | Number of parallel workers (0 = sequential) | `--parallel N` |
 | `FailFast` | `bool` | Stop execution on first failure | `--fail-fast` |
 | `NoColor` | `bool` | Disable colored output | `--no-color` |
+| `DisableLog` | `bool` | Disable the structured logger (`ctx.Logger()`) | `--disable-log` |
+| `DisableReporter` | `bool` | Disable reporter output (feature/scenario/step lines) | `--disable-reporter` |
 | `Logger` | `cacik.Logger` | Custom logger (default: slog to stdout) | - |
 
 Multiple config functions are merged (last wins for conflicts).
