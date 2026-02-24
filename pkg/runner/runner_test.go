@@ -3,6 +3,7 @@ package runner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -620,16 +621,41 @@ func TestCucumberRunner_WithTestingT(t *testing.T) {
 	})
 }
 
-// newRuleRunner creates a CucumberRunner wired to testdata/with-rule
-// with all step definitions needed by rule.feature.
+// newRuleRunner creates a CucumberRunner with a temp directory containing a rule feature file.
 // The optional onStep callback is called with each step keyword for tracking.
-func newRuleRunner(onStep func(string)) *CucumberRunner {
+func newRuleRunner(t *testing.T, onStep func(string)) *CucumberRunner {
+	t.Helper()
 	if onStep == nil {
 		onStep = func(string) {}
 	}
 
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "rule.feature"), []byte(`Feature: User management with rules
+  Background:
+    Given the system is initialized
+  Rule: Registration
+    Background:
+      Given the registration form is loaded
+    Scenario: Successful registration
+      When the user registers with "alice@example.com"
+      Then the registration should succeed
+    Scenario: Failed registration
+      When the user registers with ""
+      Then the registration should fail
+  Rule: Login
+    Background:
+      Given the login page is loaded
+    Scenario: Successful login
+      When the user logs in with "alice" and "secret"
+      Then the login should succeed
+    Scenario: Failed login
+      When the user logs in with "alice" and "wrong"
+      Then the login should fail
+`), 0644)
+	require.NoError(t, err)
+
 	return NewCucumberRunner().
-		WithFeaturesDirectories("testdata/with-rule").
+		WithFeaturesDirectories(dir).
 		RegisterStep(`^the system is initialized$`, func(ctx *cacik.Context) {
 			onStep("system initialized")
 		}).
@@ -664,7 +690,7 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 		var mu sync.Mutex
 		executedSteps := make([]string, 0)
 
-		runner := newRuleRunner(func(step string) {
+		runner := newRuleRunner(t, func(step string) {
 			mu.Lock()
 			executedSteps = append(executedSteps, step)
 			mu.Unlock()
@@ -690,7 +716,7 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 		var mu sync.Mutex
 		executedSteps := make([]string, 0)
 
-		runner := newRuleRunner(func(step string) {
+		runner := newRuleRunner(t, func(step string) {
 			mu.Lock()
 			executedSteps = append(executedSteps, step)
 			mu.Unlock()
@@ -704,7 +730,7 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 	})
 
 	t.Run("executes rules with backgrounds via testing.T subtests", func(t *testing.T) {
-		runner := newRuleRunner(nil).WithTestingT(t)
+		runner := newRuleRunner(t, nil).WithTestingT(t)
 
 		withArgs([]string{"cmd"}, func() {
 			err := runner.Run()
@@ -713,7 +739,7 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 	})
 
 	t.Run("executes rules with backgrounds via testing.T parallel subtests", func(t *testing.T) {
-		runner := newRuleRunner(nil).WithTestingT(t)
+		runner := newRuleRunner(t, nil).WithTestingT(t)
 
 		withArgs([]string{"cmd", "--parallel", "2"}, func() {
 			err := runner.Run()
@@ -722,17 +748,28 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 	})
 }
 
-// newTableRunner creates a CucumberRunner wired to testdata/with-table
-// with step definitions needed by table.feature.
-func newTableRunner(onUsers func([]string)) *CucumberRunner {
+// newTableRunner creates a CucumberRunner with a temp directory containing a table feature file.
+func newTableRunner(t *testing.T, onUsers func([]string)) *CucumberRunner {
+	t.Helper()
 	if onUsers == nil {
 		onUsers = func([]string) {}
 	}
 
+	dir := t.TempDir()
+	err := os.WriteFile(filepath.Join(dir, "table.feature"), []byte(`Feature: DataTable support
+  Scenario: Step with a DataTable
+    Given the following users:
+      | name  | age |
+      | Alice | 30  |
+      | Bob   | 25  |
+    Then there should be 2 users
+`), 0644)
+	require.NoError(t, err)
+
 	var userCount int
 
 	return NewCucumberRunner().
-		WithFeaturesDirectories("testdata/with-table").
+		WithFeaturesDirectories(dir).
 		RegisterStep(`^the following users:$`, func(ctx *cacik.Context, table cacik.Table) {
 			var names []string
 			for _, row := range table.SkipHeader() {
@@ -753,7 +790,7 @@ func TestCucumberRunner_DataTable(t *testing.T) {
 	t.Run("executes step with DataTable sequentially", func(t *testing.T) {
 		var capturedNames []string
 
-		runner := newTableRunner(func(names []string) {
+		runner := newTableRunner(t, func(names []string) {
 			capturedNames = names
 		})
 
@@ -768,7 +805,7 @@ func TestCucumberRunner_DataTable(t *testing.T) {
 		var mu sync.Mutex
 		var capturedNames []string
 
-		runner := newTableRunner(func(names []string) {
+		runner := newTableRunner(t, func(names []string) {
 			mu.Lock()
 			capturedNames = names
 			mu.Unlock()
@@ -784,7 +821,7 @@ func TestCucumberRunner_DataTable(t *testing.T) {
 	})
 
 	t.Run("executes step with DataTable via testing.T", func(t *testing.T) {
-		runner := newTableRunner(nil).WithTestingT(t)
+		runner := newTableRunner(t, nil).WithTestingT(t)
 
 		withArgs([]string{"cmd"}, func() {
 			err := runner.Run()
@@ -793,7 +830,7 @@ func TestCucumberRunner_DataTable(t *testing.T) {
 	})
 
 	t.Run("executes step with DataTable via testing.T parallel", func(t *testing.T) {
-		runner := newTableRunner(nil).WithTestingT(t)
+		runner := newTableRunner(t, nil).WithTestingT(t)
 
 		withArgs([]string{"cmd", "--parallel", "2"}, func() {
 			err := runner.Run()

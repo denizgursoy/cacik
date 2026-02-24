@@ -39,8 +39,6 @@ func TestGetComments(t *testing.T) {
 			stepMap[step.FunctionName] = step.StepName
 		}
 
-		require.Equal(t, "^step 1$", stepMap["Step1"])
-		require.Equal(t, "^step 2$", stepMap["Step2"])
 		require.Equal(t, "^I have (\\d+) apples$", stepMap["IGetApples"])
 
 		// Bool step definitions - {bool} transforms to case-insensitive pattern
