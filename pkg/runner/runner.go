@@ -342,12 +342,14 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 						for j := i + 1; j < len(scenario.FeatureBackground.Steps); j++ {
 							remainingStep := scenario.FeatureBackground.Steps[j]
 							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+							reportStepDataTable(reporter, remainingStep)
 							reporter.AddStepResult(false, true)
 						}
 						// Skip scenario steps
 						reporter.ScenarioStart(scenario.Scenario.Name)
 						for _, s := range scenario.Scenario.Steps {
 							reporter.StepSkipped(s.Keyword, s.Text)
+							reportStepDataTable(reporter, s)
 							reporter.AddStepResult(false, true)
 						}
 						reporter.AddScenarioResult(false)
@@ -367,12 +369,14 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 						for j := i + 1; j < len(scenario.RuleBackground.Steps); j++ {
 							remainingStep := scenario.RuleBackground.Steps[j]
 							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+							reportStepDataTable(reporter, remainingStep)
 							reporter.AddStepResult(false, true)
 						}
 						// Skip scenario steps
 						reporter.ScenarioStart(scenario.Scenario.Name)
 						for _, s := range scenario.Scenario.Steps {
 							reporter.StepSkipped(s.Keyword, s.Text)
+							reportStepDataTable(reporter, s)
 							reporter.AddStepResult(false, true)
 						}
 						reporter.AddScenarioResult(false)
@@ -391,6 +395,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 					for j := i + 1; j < len(scenario.Scenario.Steps); j++ {
 						remainingStep := scenario.Scenario.Steps[j]
 						reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+						reportStepDataTable(reporter, remainingStep)
 						reporter.AddStepResult(false, true)
 					}
 					reporter.AddScenarioResult(false)
@@ -478,6 +483,7 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 			reporter.ScenarioStart(scenario.Name)
 			for _, step := range scenario.Steps {
 				reporter.StepSkipped(step.Keyword, step.Text)
+				reportStepDataTable(reporter, step)
 				reporter.AddStepResult(false, true)
 			}
 			reporter.AddScenarioResult(false)
@@ -500,6 +506,7 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 			for j := i + 1; j < len(scenario.Steps); j++ {
 				remainingStep := scenario.Steps[j]
 				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reportStepDataTable(reporter, remainingStep)
 				reporter.AddStepResult(false, true)
 			}
 			break
@@ -522,6 +529,7 @@ func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages
 			for j := i + 1; j < len(background.Steps); j++ {
 				remainingStep := background.Steps[j]
 				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reportStepDataTable(reporter, remainingStep)
 				reporter.AddStepResult(false, true)
 			}
 			return err
@@ -1029,12 +1037,14 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 				for j := i + 1; j < len(exec.FeatureBackground.Steps); j++ {
 					remainingStep := exec.FeatureBackground.Steps[j]
 					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+					reportStepDataTable(reporter, remainingStep)
 					reporter.AddStepResult(false, true)
 				}
 				// Skip scenario steps
 				reporter.ScenarioStart(exec.Scenario.Name)
 				for _, step := range exec.Scenario.Steps {
 					reporter.StepSkipped(step.Keyword, step.Text)
+					reportStepDataTable(reporter, step)
 					reporter.AddStepResult(false, true)
 				}
 				reporter.AddScenarioResult(false)
@@ -1054,12 +1064,14 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 				for j := i + 1; j < len(exec.RuleBackground.Steps); j++ {
 					remainingStep := exec.RuleBackground.Steps[j]
 					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+					reportStepDataTable(reporter, remainingStep)
 					reporter.AddStepResult(false, true)
 				}
 				// Skip scenario steps
 				reporter.ScenarioStart(exec.Scenario.Name)
 				for _, step := range exec.Scenario.Steps {
 					reporter.StepSkipped(step.Keyword, step.Text)
+					reportStepDataTable(reporter, step)
 					reporter.AddStepResult(false, true)
 				}
 				reporter.AddScenarioResult(false)
@@ -1078,6 +1090,7 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 			for j := i + 1; j < len(exec.Scenario.Steps); j++ {
 				remainingStep := exec.Scenario.Steps[j]
 				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+				reportStepDataTable(reporter, remainingStep)
 				reporter.AddStepResult(false, true)
 			}
 			break
@@ -1100,4 +1113,20 @@ func formatErrors(results []ScenarioResult) string {
 		}
 	}
 	return sb.String()
+}
+
+// reportStepDataTable prints a step's DataTable via the reporter, if present.
+func reportStepDataTable(reporter cacik.Reporter, step *messages.Step) {
+	if step.DataTable == nil {
+		return
+	}
+	rows := make([][]string, 0, len(step.DataTable.Rows))
+	for _, row := range step.DataTable.Rows {
+		cells := make([]string, 0, len(row.Cells))
+		for _, cell := range row.Cells {
+			cells = append(cells, cell.Value)
+		}
+		rows = append(rows, cells)
+	}
+	reporter.StepDataTable(rows)
 }

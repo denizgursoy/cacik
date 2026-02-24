@@ -43,6 +43,12 @@ type Reporter interface {
 	StepFailed(keyword, text string, errMsg string, matchLocs []int)
 	StepSkipped(keyword, text string)
 
+	// StepDataTable prints a DataTable attached to a step.
+	// rows is the raw cell data (including header row).
+	// Call this immediately after StepPassed/StepFailed/StepSkipped when the
+	// step has an attached DataTable.
+	StepDataTable(rows [][]string)
+
 	// Summary
 	AddScenarioResult(passed bool)
 	AddStepResult(passed bool, skipped bool)
@@ -222,6 +228,38 @@ func (r *ConsoleReporter) StepSkipped(keyword, text string) {
 	r.writeln(fmt.Sprintf("%-60s %s", step, symbol))
 }
 
+// StepDataTable prints a DataTable below the step line with aligned columns.
+func (r *ConsoleReporter) StepDataTable(rows [][]string) {
+	if len(rows) == 0 {
+		return
+	}
+
+	// Compute max width per column
+	colWidths := make([]int, len(rows[0]))
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < len(colWidths) && len(cell) > colWidths[i] {
+				colWidths[i] = len(cell)
+			}
+		}
+	}
+
+	// Print each row with pipe-delimited, padded cells
+	for _, row := range rows {
+		var b strings.Builder
+		b.WriteString("      | ")
+		for i, cell := range row {
+			width := 0
+			if i < len(colWidths) {
+				width = colWidths[i]
+			}
+			b.WriteString(fmt.Sprintf("%-*s", width, cell))
+			b.WriteString(" | ")
+		}
+		r.writeln(r.color(colorGray, b.String()))
+	}
+}
+
 // AddScenarioResult tracks scenario pass/fail for summary
 func (r *ConsoleReporter) AddScenarioResult(passed bool) {
 	r.mu.Lock()
@@ -338,6 +376,7 @@ func (r *noopReporter) ScenarioStart(name string)                               
 func (r *noopReporter) StepPassed(keyword, text string, matchLocs []int)                {}
 func (r *noopReporter) StepFailed(keyword, text string, errMsg string, matchLocs []int) {}
 func (r *noopReporter) StepSkipped(keyword, text string)                                {}
+func (r *noopReporter) StepDataTable(rows [][]string)                                   {}
 func (r *noopReporter) AddScenarioResult(passed bool)                                   {}
 func (r *noopReporter) AddStepResult(passed bool, skipped bool)                         {}
 func (r *noopReporter) Flush()                                                          {}

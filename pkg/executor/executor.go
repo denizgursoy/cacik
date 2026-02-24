@@ -308,6 +308,9 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string, dataTabl
 				reporter.StepPassed(keyword, stepText, matchLocs)
 				reporter.AddStepResult(true, false)
 			}
+			if dataTable != nil {
+				reporter.StepDataTable(dataTableToRows(dataTable))
+			}
 		}
 
 		return stepErr
@@ -349,6 +352,19 @@ var cacikContextType = reflect.TypeOf((*cacik.Context)(nil))
 
 // tableType is the reflect type for cacik.Table
 var tableType = reflect.TypeOf(cacik.Table{})
+
+// dataTableToRows converts a Gherkin DataTable to a [][]string for the reporter.
+func dataTableToRows(dt *messages.DataTable) [][]string {
+	rows := make([][]string, 0, len(dt.Rows))
+	for _, row := range dt.Rows {
+		cells := make([]string, 0, len(row.Cells))
+		for _, cell := range row.Cells {
+			cells = append(cells, cell.Value)
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
 
 // buildCallArgs constructs the argument slice for function invocation
 func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string, dataTable *messages.DataTable) ([]reflect.Value, error) {
