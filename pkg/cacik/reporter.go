@@ -31,6 +31,7 @@ const (
 type Reporter interface {
 	// Feature/Scenario lifecycle
 	FeatureStart(name string)
+	RuleStart(name string)
 	BackgroundStart()
 	ScenarioStart(name string)
 
@@ -123,6 +124,12 @@ func (r *ConsoleReporter) color(c, s string) string {
 func (r *ConsoleReporter) FeatureStart(name string) {
 	r.writeln("")
 	r.writeln(r.color(colorCyan, "Feature:") + " " + r.color(colorBold, name))
+}
+
+// RuleStart prints the rule header
+func (r *ConsoleReporter) RuleStart(name string) {
+	r.writeln("")
+	r.writeln("  " + r.color(colorCyan, "Rule:") + " " + r.color(colorBold, name))
 }
 
 // BackgroundStart prints the background header
@@ -325,6 +332,7 @@ func NewNoopReporter() Reporter {
 }
 
 func (r *noopReporter) FeatureStart(name string)                                        {}
+func (r *noopReporter) RuleStart(name string)                                           {}
 func (r *noopReporter) BackgroundStart()                                                {}
 func (r *noopReporter) ScenarioStart(name string)                                       {}
 func (r *noopReporter) StepPassed(keyword, text string, matchLocs []int)                {}

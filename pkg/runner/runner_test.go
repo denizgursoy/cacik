@@ -618,3 +618,105 @@ func TestCucumberRunner_WithTestingT(t *testing.T) {
 		})
 	})
 }
+
+// newRuleRunner creates a CucumberRunner wired to testdata/with-rule
+// with all step definitions needed by rule.feature.
+// The optional onStep callback is called with each step keyword for tracking.
+func newRuleRunner(onStep func(string)) *CucumberRunner {
+	if onStep == nil {
+		onStep = func(string) {}
+	}
+
+	return NewCucumberRunner().
+		WithFeaturesDirectories("testdata/with-rule").
+		RegisterStep(`^the system is initialized$`, func(ctx *cacik.Context) {
+			onStep("system initialized")
+		}).
+		RegisterStep(`^the registration form is loaded$`, func(ctx *cacik.Context) {
+			onStep("registration form loaded")
+		}).
+		RegisterStep(`^the login page is loaded$`, func(ctx *cacik.Context) {
+			onStep("login page loaded")
+		}).
+		RegisterStep(`^the user registers with "([^"]*)"$`, func(ctx *cacik.Context, email string) {
+			onStep("register " + email)
+		}).
+		RegisterStep(`^the registration should succeed$`, func(ctx *cacik.Context) {
+			onStep("registration succeed")
+		}).
+		RegisterStep(`^the registration should fail$`, func(ctx *cacik.Context) {
+			onStep("registration fail")
+		}).
+		RegisterStep(`^the user logs in with "([^"]*)" and "([^"]*)"$`, func(ctx *cacik.Context, user, pass string) {
+			onStep("login " + user)
+		}).
+		RegisterStep(`^the login should succeed$`, func(ctx *cacik.Context) {
+			onStep("login succeed")
+		}).
+		RegisterStep(`^the login should fail$`, func(ctx *cacik.Context) {
+			onStep("login fail")
+		})
+}
+
+func TestCucumberRunner_RuleWithBackground(t *testing.T) {
+	t.Run("executes rules with feature and rule backgrounds sequentially", func(t *testing.T) {
+		var mu sync.Mutex
+		executedSteps := make([]string, 0)
+
+		runner := newRuleRunner(func(step string) {
+			mu.Lock()
+			executedSteps = append(executedSteps, step)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			require.NotEmpty(t, executedSteps, "expected steps to be executed")
+
+			// Feature background runs before every scenario (4 scenarios total)
+			count := 0
+			for _, s := range executedSteps {
+				if s == "system initialized" {
+					count++
+				}
+			}
+			require.Equal(t, 4, count, "feature background should run for each scenario")
+		})
+	})
+
+	t.Run("executes rules with backgrounds in parallel", func(t *testing.T) {
+		var mu sync.Mutex
+		executedSteps := make([]string, 0)
+
+		runner := newRuleRunner(func(step string) {
+			mu.Lock()
+			executedSteps = append(executedSteps, step)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			require.NotEmpty(t, executedSteps, "expected steps to be executed in parallel")
+		})
+	})
+
+	t.Run("executes rules with backgrounds via testing.T subtests", func(t *testing.T) {
+		runner := newRuleRunner(nil).WithTestingT(t)
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+
+	t.Run("executes rules with backgrounds via testing.T parallel subtests", func(t *testing.T) {
+		runner := newRuleRunner(nil).WithTestingT(t)
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+}

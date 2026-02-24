@@ -267,6 +267,8 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 		mainReporter = cacik.NewConsoleReporter(useColors)
 	}
 
+	lastFeature := ""
+	lastRule := ""
 	for _, scenario := range scenarios {
 		scenario := scenario // capture loop variable
 		testName := scenario.FeatureName + "/" + scenario.Scenario.Name
@@ -289,6 +291,29 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 				}()
 			} else {
 				reporter = mainReporter
+			}
+
+			// Print feature header.
+			// In parallel mode each subtest has its own buffered reporter, so
+			// always print. In sequential mode only print when the feature changes.
+			if parallel {
+				reporter.FeatureStart(scenario.FeatureName)
+			} else if scenario.FeatureName != lastFeature {
+				reporter.FeatureStart(scenario.FeatureName)
+				lastFeature = scenario.FeatureName
+				lastRule = "" // reset rule tracking when feature changes
+			}
+
+			// Print rule header when the scenario belongs to a rule.
+			if scenario.RuleName != "" {
+				if parallel {
+					reporter.RuleStart(scenario.RuleName)
+				} else if scenario.RuleName != lastRule {
+					reporter.RuleStart(scenario.RuleName)
+					lastRule = scenario.RuleName
+				}
+			} else if !parallel {
+				lastRule = "" // reset when moving out of a rule
 			}
 
 			// Create fresh context for this scenario with the subtest's *testing.T
@@ -414,6 +439,8 @@ func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinD
 
 // executeRuleWithReporter executes a rule with reporter lifecycle calls
 func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
+	reporter.RuleStart(rule.Name)
+
 	var ruleBackground *messages.Background
 
 	for _, child := range rule.Children {
@@ -681,6 +708,7 @@ type ScenarioExecution struct {
 	RuleBackground    *messages.Background
 	FeatureFile       string
 	FeatureName       string
+	RuleName          string
 }
 
 // ScenarioResult holds the result of executing a scenario
@@ -797,6 +825,7 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 							RuleBackground:    ruleBackground,
 							FeatureFile:       docWithFile.file,
 							FeatureName:       featureName,
+							RuleName:          child.Rule.Name,
 						})
 					}
 				}
@@ -980,6 +1009,11 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 
 	// Print feature header
 	reporter.FeatureStart(exec.FeatureName)
+
+	// Print rule header if this scenario belongs to a rule
+	if exec.RuleName != "" {
+		reporter.RuleStart(exec.RuleName)
+	}
 
 	scenarioPassed := true
 	var execErr error
