@@ -244,6 +244,9 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 
 	parallel := workers > 1
 
+	// Create main reporter for summary aggregation
+	mainReporter := cacik.NewConsoleReporter(useColors)
+
 	for _, scenario := range scenarios {
 		scenario := scenario // capture loop variable
 		testName := scenario.FeatureName + "/" + scenario.Scenario.Name
@@ -253,12 +256,26 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 				st.Parallel()
 			}
 
+			// For parallel: use buffered reporter per subtest to avoid interleaved output.
+			// For sequential: use the main reporter directly (prints immediately).
+			var reporter *cacik.ConsoleReporter
+			if parallel {
+				reporter = cacik.NewBufferedReporter(useColors)
+				defer func() {
+					reporter.Flush()
+					mainReporter.MergeSummary(reporter)
+				}()
+			} else {
+				reporter = mainReporter
+			}
+
 			// Create fresh context for this scenario with the subtest's *testing.T
 			opts := make([]cacik.Option, 0)
 			if c.logger != nil {
 				opts = append(opts, cacik.WithLogger(c.logger))
 			}
 			opts = append(opts, cacik.WithTestingT(st))
+			opts = append(opts, cacik.WithReporter(reporter))
 			ctx := cacik.New(opts...)
 
 			// Clone executor and set context
@@ -266,32 +283,81 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			isolatedExec.SetCacikContext(ctx)
 			isolatedExec.SetHookExecutor(hookExecutor)
 
+			scenarioPassed := true
+
 			// Execute feature background
 			if scenario.FeatureBackground != nil {
-				for _, step := range scenario.FeatureBackground.Steps {
+				reporter.BackgroundStart()
+				for i, step := range scenario.FeatureBackground.Steps {
 					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+						scenarioPassed = false
+						// Skip remaining background steps
+						for j := i + 1; j < len(scenario.FeatureBackground.Steps); j++ {
+							remainingStep := scenario.FeatureBackground.Steps[j]
+							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+							reporter.AddStepResult(false, true)
+						}
+						// Skip scenario steps
+						reporter.ScenarioStart(scenario.Scenario.Name)
+						for _, s := range scenario.Scenario.Steps {
+							reporter.StepSkipped(s.Keyword, s.Text)
+							reporter.AddStepResult(false, true)
+						}
+						reporter.AddScenarioResult(false)
 						st.Fatalf("feature background step %q failed: %v", step.Text, err)
+						return
 					}
 				}
 			}
 
 			// Execute rule background
 			if scenario.RuleBackground != nil {
-				for _, step := range scenario.RuleBackground.Steps {
+				reporter.BackgroundStart()
+				for i, step := range scenario.RuleBackground.Steps {
 					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+						scenarioPassed = false
+						// Skip remaining background steps
+						for j := i + 1; j < len(scenario.RuleBackground.Steps); j++ {
+							remainingStep := scenario.RuleBackground.Steps[j]
+							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+							reporter.AddStepResult(false, true)
+						}
+						// Skip scenario steps
+						reporter.ScenarioStart(scenario.Scenario.Name)
+						for _, s := range scenario.Scenario.Steps {
+							reporter.StepSkipped(s.Keyword, s.Text)
+							reporter.AddStepResult(false, true)
+						}
+						reporter.AddScenarioResult(false)
 						st.Fatalf("rule background step %q failed: %v", step.Text, err)
+						return
 					}
 				}
 			}
 
 			// Execute scenario steps
-			for _, step := range scenario.Scenario.Steps {
+			reporter.ScenarioStart(scenario.Scenario.Name)
+			for i, step := range scenario.Scenario.Steps {
 				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+					scenarioPassed = false
+					// Skip remaining steps
+					for j := i + 1; j < len(scenario.Scenario.Steps); j++ {
+						remainingStep := scenario.Scenario.Steps[j]
+						reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
+						reporter.AddStepResult(false, true)
+					}
+					reporter.AddScenarioResult(false)
 					st.Fatalf("step %q failed: %v", step.Text, err)
+					return
 				}
 			}
+
+			reporter.AddScenarioResult(scenarioPassed)
 		})
 	}
+
+	// Print summary after all subtests complete
+	mainReporter.PrintSummary()
 
 	return nil
 }

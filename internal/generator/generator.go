@@ -96,8 +96,10 @@ func detectPackage() (pkgName string, pkgPath string, err error) {
 	return pkgName, pkgPath, nil
 }
 
-// detectPackageName parses Go files in the given directory and returns the
-// package name. It skips test files and generated files.
+// detectPackageName detects the Go package name for the given directory.
+// It first tries to read the package clause from existing Go files.
+// If no Go files exist, it falls back to deriving the name from the directory
+// path (or the module path for the module root).
 func detectPackageName(dir string) (string, error) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(dir)
@@ -110,8 +112,8 @@ func detectPackageName(dir string) (string, error) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
-		// Skip test files and the file we will generate
-		if strings.HasSuffix(name, "_test.go") || name == "cacik_test.go" || name == "main.go" {
+		// Skip the files we generate
+		if name == "cacik_test.go" || name == "main.go" {
 			continue
 		}
 
@@ -125,7 +127,77 @@ func detectPackageName(dir string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no Go files found in %s to detect package name", dir)
+	// No Go files found — derive package name from directory or module path.
+	return packageNameFromDir(dir)
+}
+
+// packageNameFromDir derives a valid Go package name from the directory path.
+// At the module root it uses the last segment of the module path from go.mod.
+// Otherwise it uses the directory name, sanitising characters that are invalid
+// in Go identifiers (hyphens, dots, etc.).
+func packageNameFromDir(dir string) (string, error) {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+
+	// Try to use the module path when we're at the module root.
+	goModPath := filepath.Join(absDir, "go.mod")
+	if data, readErr := os.ReadFile(goModPath); readErr == nil {
+		modFile, parseErr := modfile.Parse(goModPath, data, nil)
+		if parseErr == nil && modFile.Module != nil {
+			base := filepath.Base(modFile.Module.Mod.Path)
+			if name := sanitizePackageName(base); name != "" {
+				return name, nil
+			}
+		}
+	}
+
+	// Fall back to the directory name.
+	base := filepath.Base(absDir)
+	if name := sanitizePackageName(base); name != "" {
+		return name, nil
+	}
+
+	return "", fmt.Errorf("cannot derive package name from directory %s", dir)
+}
+
+// sanitizePackageName turns a raw name (directory segment or module path
+// segment) into a valid Go package name. Invalid characters such as hyphens
+// and dots are replaced with underscores, and leading digits are prefixed
+// with an underscore.
+func sanitizePackageName(raw string) string {
+	if raw == "" || raw == "." || raw == "/" {
+		return ""
+	}
+
+	var b strings.Builder
+	for i, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			// Go package names are conventionally lowercase.
+			b.WriteRune(r - 'A' + 'a')
+		case r == '-' || r == '.':
+			if i == 0 {
+				continue // drop leading separator
+			}
+			b.WriteRune('_')
+		default:
+			// Drop other characters.
+		}
+	}
+
+	name := b.String()
+	if name == "" {
+		return ""
+	}
+	// A package name must not start with a digit.
+	if name[0] >= '0' && name[0] <= '9' {
+		name = "_" + name
+	}
+	return name
 }
 
 // detectImportPath walks up from dir looking for go.mod, then computes the

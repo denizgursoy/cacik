@@ -9,13 +9,14 @@ import (
 
 // ANSI color codes
 const (
-	colorReset  = "\033[0m"
-	colorGreen  = "\033[32m"
-	colorRed    = "\033[31m"
-	colorYellow = "\033[33m"
-	colorCyan   = "\033[36m"
-	colorGray   = "\033[90m"
-	colorBold   = "\033[1m"
+	colorReset    = "\033[0m"
+	colorGreen    = "\033[32m"
+	colorRed      = "\033[31m"
+	colorYellow   = "\033[33m"
+	colorCyan     = "\033[36m"
+	colorGray     = "\033[90m"
+	colorBold     = "\033[1m"
+	colorStepText = "\033[38;2;187;181;41m" // IntelliJ Cucumber yellow (#BBB529)
 )
 
 // Symbols for step status
@@ -120,10 +121,11 @@ func (r *ConsoleReporter) ScenarioStart(name string) {
 	r.writeln("  " + r.color(colorCyan, "Scenario:") + " " + r.color(colorBold, name))
 }
 
-// formatStep formats a step with colored keyword
+// formatStep formats a step with colored keyword and step text
 func (r *ConsoleReporter) formatStep(keyword, text string) string {
 	coloredKeyword := r.color(colorCyan, keyword)
-	return fmt.Sprintf("    %s%s", coloredKeyword, text)
+	coloredText := r.color(colorStepText, text)
+	return fmt.Sprintf("    %s%s", coloredKeyword, coloredText)
 }
 
 // StepPassed prints a passed step with green checkmark

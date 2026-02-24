@@ -63,11 +63,36 @@ func TestDetectPackageName(t *testing.T) {
 		require.Equal(t, "generator", pkgName)
 	})
 
-	t.Run("returns error for directory with no Go files", func(t *testing.T) {
+	t.Run("falls back to directory name when no Go files exist", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		_, err := detectPackageName(tmpDir)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "no Go files found")
+		// Create a subdirectory with a known name
+		subDir := tmpDir + "/myfeatures"
+		require.NoError(t, os.Mkdir(subDir, 0o755))
+
+		pkgName, err := detectPackageName(subDir)
+		require.NoError(t, err)
+		require.Equal(t, "myfeatures", pkgName)
+	})
+
+	t.Run("sanitizes hyphens in directory name", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		subDir := tmpDir + "/my-cool-app"
+		require.NoError(t, os.Mkdir(subDir, 0o755))
+
+		pkgName, err := detectPackageName(subDir)
+		require.NoError(t, err)
+		require.Equal(t, "my_cool_app", pkgName)
+	})
+
+	t.Run("uses module path at module root with no Go files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		// Create a go.mod in the temp dir
+		goMod := "module github.com/example/myproject\n\ngo 1.21\n"
+		require.NoError(t, os.WriteFile(tmpDir+"/go.mod", []byte(goMod), 0o644))
+
+		pkgName, err := detectPackageName(tmpDir)
+		require.NoError(t, err)
+		require.Equal(t, "myproject", pkgName)
 	})
 }
 
@@ -87,4 +112,28 @@ func TestDetectImportPath(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "go.mod not found")
 	})
+}
+
+func TestSanitizePackageName(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"myapp", "myapp"},
+		{"my-app", "my_app"},
+		{"my.app", "my_app"},
+		{"MyApp", "myapp"},
+		{"123app", "_123app"},
+		{"", ""},
+		{"a", "a"},
+		{"-leading", "leading"},
+		{"with spaces", "withspaces"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := sanitizePackageName(tt.input)
+			require.Equal(t, tt.expected, result)
+		})
+	}
 }
