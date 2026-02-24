@@ -29,10 +29,12 @@ type (
 	}
 
 	Output struct {
-		ConfigFunctions []*FunctionLocator // Functions returning *cacik.Config
-		HooksFunctions  []*FunctionLocator // Functions returning *cacik.Hooks
-		StepFunctions   []*StepFunctionLocator
-		CustomTypes     map[string]*CustomType // lowercase type name -> CustomType
+		ConfigFunctions    []*FunctionLocator // Functions returning *cacik.Config
+		HooksFunctions     []*FunctionLocator // Functions returning *cacik.Hooks
+		StepFunctions      []*StepFunctionLocator
+		CustomTypes        map[string]*CustomType // lowercase type name -> CustomType
+		CurrentPackagePath string                 // Full import path of the package where the test file is generated
+		PackageName        string                 // Short package name (e.g., "myapp"); if empty, defaults to "main"
 	}
 )
 
@@ -95,16 +97,41 @@ func regexEscape(s string) string {
 	return result
 }
 
+// isTestMode returns true when the output targets a Go test file (cacik_test.go)
+// rather than a standalone main.go.
+func (o *Output) isTestMode() bool {
+	return o.PackageName != ""
+}
+
+// isSamePackage returns true when the function is in the same package as the
+// generated test file and therefore should be called without an import qualifier.
+func (o *Output) isSamePackage(fullPkg string) bool {
+	return o.CurrentPackagePath != "" && fullPkg == o.CurrentPackagePath
+}
+
+// qualOrLocal returns a jen.Statement that either qualifies the function call with
+// its package path (for external packages) or calls it directly (for same-package).
+func (o *Output) qualOrLocal(fullPkg, funcName string) *jen.Statement {
+	if o.isSamePackage(fullPkg) {
+		return jen.Id(funcName)
+	}
+	return jen.Qual(fullPkg, funcName)
+}
+
 func (o *Output) Generate(writer io.Writer) error {
-	mainFile := jen.NewFile("main")
+	pkgName := "main"
+	if o.isTestMode() {
+		pkgName = o.PackageName
+	}
+	mainFile := jen.NewFile(pkgName)
 
 	var statements []jen.Code
 
-	// Collect configs: configs := cacik.MergeConfigs(...)
+	// Collect configs: config := cacik.MergeConfigs(...)
 	if len(o.ConfigFunctions) > 0 {
 		configCalls := make([]jen.Code, 0, len(o.ConfigFunctions))
 		for _, cf := range o.ConfigFunctions {
-			configCalls = append(configCalls, jen.Qual(cf.FullPackageName, cf.FunctionName).Call())
+			configCalls = append(configCalls, o.qualOrLocal(cf.FullPackageName, cf.FunctionName).Call())
 		}
 		statements = append(statements,
 			jen.Id("config").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/cacik", "MergeConfigs").Call(configCalls...),
@@ -115,7 +142,7 @@ func (o *Output) Generate(writer io.Writer) error {
 	if len(o.HooksFunctions) > 0 {
 		hooksCalls := make([]jen.Code, 0, len(o.HooksFunctions))
 		for _, hf := range o.HooksFunctions {
-			hooksCalls = append(hooksCalls, jen.Qual(hf.FullPackageName, hf.FunctionName).Call())
+			hooksCalls = append(hooksCalls, o.qualOrLocal(hf.FullPackageName, hf.FunctionName).Call())
 		}
 		statements = append(statements,
 			jen.Id("hooks").Op(":=").Index().Op("*").Qual("github.com/denizgursoy/cacik/pkg/cacik", "Hooks").Values(hooksCalls...),
@@ -124,6 +151,11 @@ func (o *Output) Generate(writer io.Writer) error {
 
 	// Build runner chain
 	runnerChain := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
+
+	// Add WithTestingT(t) in test mode
+	if o.isTestMode() {
+		runnerChain.Id("WithTestingT").Call(jen.Id("t")).Id(".").Line()
+	}
 
 	// Add WithConfig if we have configs
 	if len(o.ConfigFunctions) > 0 {
@@ -153,7 +185,7 @@ func (o *Output) Generate(writer io.Writer) error {
 
 	// Register steps
 	for _, function := range o.StepFunctions {
-		runnerChain.Id("RegisterStep").Call(jen.Lit(function.StepName), jen.Qual(function.FullPackageName, function.FunctionName)).Id(".").Line()
+		runnerChain.Id("RegisterStep").Call(jen.Lit(function.StepName), o.qualOrLocal(function.FullPackageName, function.FunctionName)).Id(".").Line()
 	}
 
 	runnerChain.Id("Run").Call()
@@ -161,13 +193,30 @@ func (o *Output) Generate(writer io.Writer) error {
 	statements = append(statements, runnerChain)
 
 	// Error handling
-	statements = append(statements,
-		jen.If(jen.Id("err").Op("!=").Nil()).Block(
-			jen.Qual("log", "Fatal").Call(jen.Id("err")),
-		),
-	)
+	if o.isTestMode() {
+		// In test mode: use t.Fatal(err) instead of log.Fatal(err)
+		statements = append(statements,
+			jen.If(jen.Id("err").Op("!=").Nil()).Block(
+				jen.Id("t").Dot("Fatal").Call(jen.Id("err")),
+			),
+		)
+	} else {
+		statements = append(statements,
+			jen.If(jen.Id("err").Op("!=").Nil()).Block(
+				jen.Qual("log", "Fatal").Call(jen.Id("err")),
+			),
+		)
+	}
 
-	mainFile.Func().Id("main").Params().Block(statements...)
+	// Build the function declaration
+	if o.isTestMode() {
+		// func TestCacik(t *testing.T) { ... }
+		mainFile.Func().Id("TestCacik").Params(
+			jen.Id("t").Op("*").Qual("testing", "T"),
+		).Block(statements...)
+	} else {
+		mainFile.Func().Id("main").Params().Block(statements...)
+	}
 
 	_, err := writer.Write([]byte(mainFile.GoString()))
 

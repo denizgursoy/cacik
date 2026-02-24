@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
@@ -24,6 +25,7 @@ type (
 		featureDirectories []string
 		executor           *executor.StepExecutor
 		logger             cacik.Logger
+		t                  *testing.T
 	}
 )
 
@@ -81,6 +83,14 @@ func (c *CucumberRunner) RegisterCustomType(name, underlying string, values map[
 // WithLogger sets the logger for step functions
 func (c *CucumberRunner) WithLogger(logger cacik.Logger) *CucumberRunner {
 	c.logger = logger
+	return c
+}
+
+// WithTestingT sets the *testing.T for the runner.
+// When set, each scenario runs as a subtest via t.Run() and assertion
+// failures use t.Fatalf() instead of panicking.
+func (c *CucumberRunner) WithTestingT(t *testing.T) *CucumberRunner {
+	c.t = t
 	return c
 }
 
@@ -156,6 +166,11 @@ func (c *CucumberRunner) Run() error {
 		docs = append(docs, &documentWithFile{document: document, file: file})
 	}
 
+	// If *testing.T is set, use t.Run() subtests
+	if c.t != nil {
+		return c.runWithTestingT(docs, workers, failFast, useColors, hookExecutor)
+	}
+
 	// If parallel execution is requested
 	if workers > 1 {
 		// Collect all scenarios from filtered documents
@@ -216,6 +231,69 @@ func (c *CucumberRunner) Run() error {
 	reporter.PrintSummary()
 
 	return runErr
+}
+
+// runWithTestingT executes scenarios using t.Run() subtests.
+// Each scenario becomes a Go subtest, and parallel scenarios use t.Parallel().
+func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, failFast bool, useColors bool, hookExecutor *cacik.HookExecutor) error {
+	// Collect all scenarios from filtered documents
+	scenarios := c.collectScenarios(docs)
+	if len(scenarios) == 0 {
+		return nil
+	}
+
+	parallel := workers > 1
+
+	for _, scenario := range scenarios {
+		scenario := scenario // capture loop variable
+		testName := scenario.FeatureName + "/" + scenario.Scenario.Name
+
+		c.t.Run(testName, func(st *testing.T) {
+			if parallel {
+				st.Parallel()
+			}
+
+			// Create fresh context for this scenario with the subtest's *testing.T
+			opts := make([]cacik.Option, 0)
+			if c.logger != nil {
+				opts = append(opts, cacik.WithLogger(c.logger))
+			}
+			opts = append(opts, cacik.WithTestingT(st))
+			ctx := cacik.New(opts...)
+
+			// Clone executor and set context
+			isolatedExec := c.executor.Clone()
+			isolatedExec.SetCacikContext(ctx)
+			isolatedExec.SetHookExecutor(hookExecutor)
+
+			// Execute feature background
+			if scenario.FeatureBackground != nil {
+				for _, step := range scenario.FeatureBackground.Steps {
+					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+						st.Fatalf("feature background step %q failed: %v", step.Text, err)
+					}
+				}
+			}
+
+			// Execute rule background
+			if scenario.RuleBackground != nil {
+				for _, step := range scenario.RuleBackground.Steps {
+					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+						st.Fatalf("rule background step %q failed: %v", step.Text, err)
+					}
+				}
+			}
+
+			// Execute scenario steps
+			for _, step := range scenario.Scenario.Steps {
+				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+					st.Fatalf("step %q failed: %v", step.Text, err)
+				}
+			}
+		})
+	}
+
+	return nil
 }
 
 // executeDocumentWithReporter executes a document with reporter lifecycle calls

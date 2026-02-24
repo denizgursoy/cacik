@@ -536,3 +536,25 @@ func TestPanicT(t *testing.T) {
 		})
 	})
 }
+
+func TestWithTestingT(t *testing.T) {
+	t.Run("uses provided T for assertions", func(t *testing.T) {
+		ctx := New(WithTestingT(t))
+		require.NotNil(t, ctx.TestingT())
+		// Assertions should work without panicking when using *testing.T
+		ctx.Assert().Equal(1, 1)
+		ctx.Assert().True(true)
+	})
+
+	t.Run("TestingT returns the T interface", func(t *testing.T) {
+		ctx := New(WithTestingT(t))
+		require.Equal(t, t, ctx.TestingT())
+	})
+
+	t.Run("default TestingT returns panicT", func(t *testing.T) {
+		ctx := New()
+		require.NotNil(t, ctx.TestingT())
+		_, ok := ctx.TestingT().(*panicT)
+		require.True(t, ok)
+	})
+}

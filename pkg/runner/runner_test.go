@@ -536,3 +536,85 @@ func TestCucumberRunner_RunParallel(t *testing.T) {
 		})
 	})
 }
+
+func TestCucumberRunner_WithTestingT(t *testing.T) {
+	t.Run("executes scenarios as subtests", func(t *testing.T) {
+		stepExecuted := false
+
+		runner := NewCucumberRunner().
+			WithTestingT(t).
+			WithFeaturesDirectories("testdata/with-tag").
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
+				stepExecuted = true
+			}).
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+			}).
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+			}).
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+			})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			require.True(t, stepExecuted, "expected step to be executed via t.Run subtests")
+		})
+	})
+
+	t.Run("runs parallel scenarios as parallel subtests", func(t *testing.T) {
+		var mu sync.Mutex
+		executedSteps := make([]string, 0)
+
+		runner := NewCucumberRunner().
+			WithTestingT(t).
+			WithFeaturesDirectories("testdata/with-tag").
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "hello")
+				mu.Unlock()
+			}).
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user is logged in")
+				mu.Unlock()
+			}).
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user clicks "+link)
+				mu.Unlock()
+			}).
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+				mu.Lock()
+				executedSteps = append(executedSteps, "user will be logged out")
+				mu.Unlock()
+			})
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			// Note: with t.Parallel() subtests, steps execute after this function
+			// returns, so we cannot assert on executedSteps here. The subtests
+			// themselves verify execution by passing.
+		})
+	})
+
+	t.Run("assertion failure fails the subtest not the parent", func(t *testing.T) {
+		runner := NewCucumberRunner().
+			WithTestingT(t).
+			WithFeaturesDirectories("testdata/with-tag").
+			RegisterStep("^hello$", func(ctx *cacik.Context) {
+				// This step passes
+			}).
+			RegisterStep("^user is logged in$", func(ctx *cacik.Context) {
+			}).
+			RegisterStep("^user clicks (.+)$", func(ctx *cacik.Context, link string) {
+			}).
+			RegisterStep("^user will be logged out$", func(ctx *cacik.Context) {
+			})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+}

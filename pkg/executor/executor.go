@@ -254,14 +254,27 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 			e.hookExecutor.ExecuteBeforeStep()
 		}
 
-		// Execute step with panic recovery for reporter
+		// Execute step with panic recovery and runtime.Goexit detection
 		var stepErr error
 		var panicMsg string
+
+		// Check if we have a *testing.T backing (for runtime.Goexit detection)
+		var testingT cacik.T
+		if e.cacikCtx != nil {
+			testingT = e.cacikCtx.TestingT()
+		}
+
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
+					// Traditional panic-based failure (panicT or user panic)
 					panicMsg = fmt.Sprintf("%v", r)
 					stepErr = fmt.Errorf("%v", r)
+				} else if testingT != nil && testingT.Failed() {
+					// runtime.Goexit() path: t.FailNow() was called.
+					// Deferred functions run but recover() returns nil.
+					panicMsg = "assertion failed"
+					stepErr = fmt.Errorf("step assertion failed")
 				}
 			}()
 			stepErr = e.invokeStepFunction(stepDef.Function, capturedArgs)
@@ -297,7 +310,7 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 		e.cacikCtx.Reporter().StepFailed(keyword, stepText, errMsg)
 		e.cacikCtx.Reporter().AddStepResult(false, false)
 	}
-	return fmt.Errorf(errMsg)
+	return fmt.Errorf("%s", errMsg)
 }
 
 // invokeStepFunction calls the step function with proper argument conversion

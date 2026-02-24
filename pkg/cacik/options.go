@@ -32,3 +32,13 @@ func WithReporter(reporter Reporter) Option {
 		c.reporter = reporter
 	}
 }
+
+// WithTestingT sets the T interface (typically *testing.T) for assertions.
+// When set, assertion failures use t.Fatalf() instead of panicking.
+func WithTestingT(t T) Option {
+	return func(c *Context) {
+		c.t = t
+		c.assert.t = t
+		c.data.t = t
+	}
+}

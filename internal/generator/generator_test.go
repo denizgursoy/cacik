@@ -50,3 +50,41 @@ func TestStartApplication(t *testing.T) {
 		require.Nil(t, err)
 	})
 }
+
+func TestDetectPackageName(t *testing.T) {
+	t.Run("detects package name from Go files in directory", func(t *testing.T) {
+		// This test runs in the generator package directory, which has Go files
+		// with "package generator"
+		dir, err := os.Getwd()
+		require.NoError(t, err)
+
+		pkgName, err := detectPackageName(dir)
+		require.NoError(t, err)
+		require.Equal(t, "generator", pkgName)
+	})
+
+	t.Run("returns error for directory with no Go files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		_, err := detectPackageName(tmpDir)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no Go files found")
+	})
+}
+
+func TestDetectImportPath(t *testing.T) {
+	t.Run("detects import path from go.mod", func(t *testing.T) {
+		// This test runs from the generator package directory
+		dir, err := os.Getwd()
+		require.NoError(t, err)
+
+		pkgPath, err := detectImportPath(dir)
+		require.NoError(t, err)
+		require.Equal(t, "github.com/denizgursoy/cacik/internal/generator", pkgPath)
+	})
+
+	t.Run("returns error for directory without go.mod ancestor", func(t *testing.T) {
+		_, err := detectImportPath("/tmp")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "go.mod not found")
+	})
+}

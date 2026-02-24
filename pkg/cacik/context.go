@@ -3,9 +3,19 @@ package cacik
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 )
+
+// T is the test interface used for assertion failures.
+// It is satisfied by *testing.T and by the internal panicT fallback.
+type T interface {
+	Errorf(format string, args ...any)
+	FailNow()
+	Helper()
+	Failed() bool
+}
 
 // Logger is the interface for structured logging within step functions.
 // Compatible with *slog.Logger and other structured loggers.
@@ -19,7 +29,7 @@ type Logger interface {
 // Data provides scenario-scoped state management.
 // Use this to store and retrieve values across steps within a scenario.
 type Data struct {
-	t      *panicT
+	t      T
 	values map[string]any
 }
 
@@ -35,11 +45,13 @@ func (d *Data) Get(key string) (any, bool) {
 	return v, ok
 }
 
-// MustGet retrieves a value or panics if not found.
+// MustGet retrieves a value or fails the test if not found.
 func (d *Data) MustGet(key string) any {
+	d.t.Helper()
 	v, ok := d.values[key]
 	if !ok {
 		d.t.Errorf("key %q not found in context data", key)
+		d.t.FailNow()
 	}
 	return v
 }
@@ -48,6 +60,7 @@ func (d *Data) MustGet(key string) any {
 // It provides logging, assertions, and state management for BDD tests.
 type Context struct {
 	ctx      context.Context
+	t        T
 	logger   Logger
 	assert   *Assert
 	data     *Data
@@ -59,6 +72,7 @@ func New(opts ...Option) *Context {
 	t := &panicT{}
 	c := &Context{
 		ctx:    context.Background(),
+		t:      t,
 		assert: &Assert{t: t},
 		data:   &Data{t: t, values: make(map[string]any)},
 	}
@@ -106,6 +120,11 @@ func (c *Context) Reporter() Reporter {
 	return c.reporter
 }
 
+// TestingT returns the T interface used for assertions.
+func (c *Context) TestingT() T {
+	return c.t
+}
+
 // noopLogger discards all log messages.
 type noopLogger struct{}
 
@@ -114,15 +133,23 @@ func (n *noopLogger) Info(msg string, args ...any)  {}
 func (n *noopLogger) Warn(msg string, args ...any)  {}
 func (n *noopLogger) Error(msg string, args ...any) {}
 
-// panicT panics on test failure.
-type panicT struct{}
+// panicT panics on test failure. Used as fallback when *testing.T is not provided.
+type panicT struct {
+	failed bool
+}
 
 func (p *panicT) Errorf(format string, args ...any) {
-	panic("test failed: " + format)
+	p.failed = true
+	panic(fmt.Sprintf("test failed: "+format, args...))
 }
 
 func (p *panicT) FailNow() {
+	p.failed = true
 	panic("test failed")
 }
 
 func (p *panicT) Helper() {}
+
+func (p *panicT) Failed() bool {
+	return p.failed
+}

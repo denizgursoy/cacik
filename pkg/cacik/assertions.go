@@ -9,7 +9,7 @@ import (
 // Assert provides assertion methods for BDD tests.
 // All assertions fail immediately (fail-fast behavior).
 type Assert struct {
-	t *panicT
+	t T
 }
 
 // Equal asserts expected == actual (using reflect.DeepEqual).
@@ -255,11 +255,13 @@ func (a *Assert) NotSame(expected, actual any, msgAndArgs ...any) {
 
 // Fail fails the test immediately with the given message.
 func (a *Assert) Fail(msgAndArgs ...any) {
+	a.t.Helper()
 	msg := "Test failed"
 	if len(msgAndArgs) > 0 {
 		msg = formatMsgAndArgs(msgAndArgs...)
 	}
-	a.t.Errorf(msg)
+	a.t.Errorf("%s", msg)
+	a.t.FailNow()
 }
 
 // ============================================================================
@@ -268,13 +270,15 @@ func (a *Assert) Fail(msgAndArgs ...any) {
 
 // failf formats a failure message with format args and optional user message.
 func (a *Assert) failf(msgAndArgs []any, format string, formatArgs ...any) {
+	a.t.Helper()
 	msg := fmt.Sprintf(format, formatArgs...)
 
 	if len(msgAndArgs) > 0 {
 		msg += ": " + formatMsgAndArgs(msgAndArgs...)
 	}
 
-	a.t.Errorf(msg)
+	a.t.Errorf("%s", msg)
+	a.t.FailNow()
 }
 
 // formatMsgAndArgs formats optional message and arguments.

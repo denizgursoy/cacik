@@ -23,7 +23,7 @@ Feature: My first feature
 steps.go
 
 ```go
-package main
+package myapp
 
 import "github.com/denizgursoy/cacik/pkg/cacik"
 
@@ -479,50 +479,53 @@ func MyStep(ctx *cacik.Context) {
 go install github.com/denizgursoy/cacik/cmd/cacik@latest
 ```
 
-## Execute `cacik` to create main.go
+## Execute `cacik` to create cacik_test.go
 
 ```shell
 cacik
 ```
 
-Cacik will create the main file:
+Cacik will detect your package name and create a Go test file:
 
 ```
 ├── apple.feature
-├── main.go
+├── cacik_test.go
 └── steps.go
 ```
 
-main.go
+cacik_test.go
 
 ```go
-package main
+package myapp
 
 import (
 	runner "github.com/denizgursoy/cacik/pkg/runner"
-	"log"
+	"testing"
 )
 
-func main() {
+func TestCacik(t *testing.T) {
 	err := runner.NewCucumberRunner().
+		WithTestingT(t).
 		RegisterStep("^I have (\\d+) apples$", IHaveApples).
 		Run()
 
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 }
 ```
 
-## Execute main.go
+Since the step functions are in the same package, they are called directly without an import qualifier. If steps are in a different package, cacik will add the appropriate import and qualifier automatically.
+
+## Execute tests
 
 To execute scenarios in the feature file, run:
 
 ```shell
-go run .
+go test -v
 ```
 
-It will print `I have 3 apples`
+Each scenario runs as a Go subtest via `t.Run()`, so you get standard `go test` output with per-scenario pass/fail reporting. Assertion failures use `t.Fatalf()` instead of panicking.
 
 ## Parallel Execution
 
@@ -530,20 +533,23 @@ Run scenarios in parallel using the `--parallel` flag:
 
 ```shell
 # Run with 4 workers
-go run . --parallel 4
+go test -v -- --parallel 4
 
 # Alternative syntax
-go run . --parallel=8
+go test -v -- --parallel=8
 
 # Combine with tags
-go run . --tags "@smoke" --parallel 4
+go test -v -- --tags "@smoke" --parallel 4
 ```
+
+**Note:** Use `--` to separate `go test` flags from cacik flags.
 
 ### How It Works
 
+- When using `WithTestingT(t)`, each scenario runs as a `t.Run()` subtest
+- Parallel scenarios use `t.Parallel()` inside their subtests, leveraging Go's native test parallelism
 - Each scenario runs in complete isolation with its own `*cacik.Context`
 - Background steps are re-executed for each scenario
-- All errors are collected and reported (no fail-fast between scenarios)
 - Default: 1 (sequential execution)
 
 ### Context Isolation
@@ -586,25 +592,25 @@ Tag expressions support `and`, `or`, `not` operators and parentheses for complex
 
 ```shell
 # Run all scenarios
-go run .
+go test -v
 
 # Run only @smoke scenarios
-go run . --tags "@smoke"
+go test -v -- --tags "@smoke"
 
 # Run scenarios with both @smoke AND @fast
-go run . --tags "@smoke and @fast"
+go test -v -- --tags "@smoke and @fast"
 
 # Run scenarios with @gui OR @database
-go run . --tags "@gui or @database"
+go test -v -- --tags "@gui or @database"
 
 # Run scenarios that are NOT @slow
-go run . --tags "not @slow"
+go test -v -- --tags "not @slow"
 
 # Complex expression
-go run . --tags "(@smoke or @ui) and not @slow"
+go test -v -- --tags "(@smoke or @ui) and not @slow"
 
 # Alternative syntax with equals sign
-go run . --tags="@smoke and @fast"
+go test -v -- --tags="@smoke and @fast"
 ```
 
 ### Tag Inheritance
@@ -631,19 +637,19 @@ Feature: Billing
 
 ```shell
 # Matches "Quick payment" (has @billing)
-go run . --tags "@billing"
+go test -v -- --tags "@billing"
 
 # Matches "Quick payment" (has @smoke)
-go run . --tags "@smoke"
+go test -v -- --tags "@smoke"
 
 # Matches "Monthly billing" (has @subscription)
-go run . --tags "@subscription"
+go test -v -- --tags "@subscription"
 
 # Matches both scenarios (both have @billing from feature)
-go run . --tags "@billing"
+go test -v -- --tags "@billing"
 
 # Matches "Quick payment" only (needs both @billing AND @smoke)
-go run . --tags "@billing and @smoke"
+go test -v -- --tags "@billing and @smoke"
 ```
 
 ## Configuration

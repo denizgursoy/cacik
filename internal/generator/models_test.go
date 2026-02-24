@@ -77,6 +77,120 @@ func TestOutput_Generate(t *testing.T) {
 	})
 }
 
+func TestOutput_Generate_TestMode(t *testing.T) {
+	t.Run("should generate test file with TestCacik and WithTestingT", func(t *testing.T) {
+		testData := Output{
+			PackageName:        "myapp",
+			CurrentPackagePath: "github.com/example/myapp",
+			ConfigFunctions: []*FunctionLocator{
+				{
+					FullPackageName: "github.com/example/myapp/config",
+					FunctionName:    "ConfigFunction",
+				},
+			},
+			HooksFunctions: []*FunctionLocator{
+				{
+					FullPackageName: "github.com/example/myapp/hooks",
+					FunctionName:    "HooksFunction",
+				},
+			},
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^step 1$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "github.com/example/myapp/steps",
+						FunctionName:    "Step1Function",
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		// Should use the detected package name, not "main"
+		require.Contains(t, output, "package myapp")
+		require.NotContains(t, output, "package main")
+
+		// Should use func TestCacik(t *testing.T) instead of func main()
+		require.Contains(t, output, "func TestCacik(t *testing.T)")
+		require.NotContains(t, output, "func main()")
+
+		// Should import "testing" instead of "log"
+		require.Contains(t, output, `"testing"`)
+		require.NotContains(t, output, `"log"`)
+
+		// Should use t.Fatal(err) instead of log.Fatal(err)
+		require.Contains(t, output, "t.Fatal(err)")
+		require.NotContains(t, output, "log.Fatal(err)")
+
+		// Should include WithTestingT(t) in the runner chain
+		require.Contains(t, output, "WithTestingT(t)")
+	})
+
+	t.Run("should call same-package functions without import qualifier", func(t *testing.T) {
+		testData := Output{
+			PackageName:        "myapp",
+			CurrentPackagePath: "github.com/example/myapp",
+			ConfigFunctions: []*FunctionLocator{
+				{
+					FullPackageName: "github.com/example/myapp", // same package
+					FunctionName:    "GetConfig",
+				},
+			},
+			HooksFunctions: []*FunctionLocator{
+				{
+					FullPackageName: "github.com/example/myapp", // same package
+					FunctionName:    "GetHooks",
+				},
+			},
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^local step$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "github.com/example/myapp", // same package
+						FunctionName:    "LocalStep",
+					},
+				},
+				{
+					StepName: "^external step$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "github.com/example/other", // different package
+						FunctionName:    "ExternalStep",
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		// Same-package functions should be called directly (no import qualifier)
+		require.Contains(t, output, "GetConfig()")
+		require.NotContains(t, output, "myapp.GetConfig()")
+
+		require.Contains(t, output, "GetHooks()")
+		require.NotContains(t, output, "myapp.GetHooks()")
+
+		require.Contains(t, output, "LocalStep)")
+		require.NotContains(t, output, "myapp.LocalStep")
+
+		// External functions should still have a qualifier
+		require.Contains(t, output, "other.ExternalStep")
+
+		// Should NOT import the current package
+		require.NotContains(t, output, `"github.com/example/myapp"`)
+		// Should import the external package
+		require.Contains(t, output, `"github.com/example/other"`)
+	})
+}
+
 func TestCustomType_RegexPattern(t *testing.T) {
 	t.Run("generates case-insensitive pattern", func(t *testing.T) {
 		ct := &CustomType{
