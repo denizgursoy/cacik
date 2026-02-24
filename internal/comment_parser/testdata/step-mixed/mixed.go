@@ -17,18 +17,18 @@ const (
 type Priority int
 
 const (
-	PriorityLow    Priority = 1
-	PriorityMedium Priority = 2
-	PriorityHigh   Priority = 3
+	Low    Priority = 1
+	Medium Priority = 2
+	High   Priority = 3
 )
 
 // Size represents item size
 type Size string
 
 const (
-	SizeSmall  Size = "small"
-	SizeMedium Size = "medium"
-	SizeLarge  Size = "large"
+	Small      Size = "small"
+	MediumSize Size = "medium"
+	Large      Size = "large"
 )
 
 // WantColoredVehicle combines custom type {color}, normal regex (car|bike), {int}, and {float}
@@ -68,7 +68,7 @@ func QuantityWithAny(ctx *cacik.Context, quantity int, item string) {
 }
 
 // ConditionalAction combines normal regex with {color} and boolean
-// @cacik `^(enable|disable) the {color} (button|switch) and set active to (true|false)$`
+// @cacik `^(enable|disable) the {color} (button|switch) and set active to {bool}$`
 func ConditionalAction(ctx *cacik.Context, action string, color Color, element string, active bool) {
 	ctx.Logger().Info("conditional action", "action", action, "color", color, "element", element, "active", active)
 }
