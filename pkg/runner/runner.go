@@ -336,7 +336,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			if scenario.FeatureBackground != nil {
 				reporter.BackgroundStart()
 				for i, step := range scenario.FeatureBackground.Steps {
-					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 						scenarioPassed = false
 						// Skip remaining background steps
 						for j := i + 1; j < len(scenario.FeatureBackground.Steps); j++ {
@@ -361,7 +361,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			if scenario.RuleBackground != nil {
 				reporter.BackgroundStart()
 				for i, step := range scenario.RuleBackground.Steps {
-					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 						scenarioPassed = false
 						// Skip remaining background steps
 						for j := i + 1; j < len(scenario.RuleBackground.Steps); j++ {
@@ -385,7 +385,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			// Execute scenario steps
 			reporter.ScenarioStart(scenario.Scenario.Name)
 			for i, step := range scenario.Scenario.Steps {
-				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 					scenarioPassed = false
 					// Skip remaining steps
 					for j := i + 1; j < len(scenario.Scenario.Steps); j++ {
@@ -493,7 +493,7 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 	scenarioPassed := true
 	var scenarioErr error
 	for i, step := range scenario.Steps {
-		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			scenarioPassed = false
 			scenarioErr = err
 			// Skip remaining steps
@@ -517,7 +517,7 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 // executeBackgroundStepsWithReporter executes background steps with reporter
 func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages.Background, reporter *cacik.ConsoleReporter) error {
 	for i, step := range background.Steps {
-		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			// Skip remaining background steps
 			for j := i + 1; j < len(background.Steps); j++ {
 				remainingStep := background.Steps[j]
@@ -851,7 +851,7 @@ func (c *CucumberRunner) executeScenarioWithIsolatedContext(exec ScenarioExecuti
 	// Execute feature background
 	if exec.FeatureBackground != nil {
 		for _, step := range exec.FeatureBackground.Steps {
-			if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 				return fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
 			}
 		}
@@ -860,7 +860,7 @@ func (c *CucumberRunner) executeScenarioWithIsolatedContext(exec ScenarioExecuti
 	// Execute rule background
 	if exec.RuleBackground != nil {
 		for _, step := range exec.RuleBackground.Steps {
-			if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 				return fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
 			}
 		}
@@ -868,7 +868,7 @@ func (c *CucumberRunner) executeScenarioWithIsolatedContext(exec ScenarioExecuti
 
 	// Execute scenario steps
 	for _, step := range exec.Scenario.Steps {
-		if err := isolatedExec.ExecuteStep(step.Text); err != nil {
+		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			return fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
 		}
 	}
@@ -1022,7 +1022,7 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 	if exec.FeatureBackground != nil {
 		reporter.BackgroundStart()
 		for i, step := range exec.FeatureBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 				scenarioPassed = false
 				execErr = fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
 				// Skip remaining background steps
@@ -1047,7 +1047,7 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 	if exec.RuleBackground != nil {
 		reporter.BackgroundStart()
 		for i, step := range exec.RuleBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 				scenarioPassed = false
 				execErr = fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
 				// Skip remaining background steps
@@ -1071,7 +1071,7 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 	// Execute scenario steps
 	reporter.ScenarioStart(exec.Scenario.Name)
 	for i, step := range exec.Scenario.Steps {
-		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text); err != nil {
+		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			scenarioPassed = false
 			execErr = fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
 			// Skip remaining steps

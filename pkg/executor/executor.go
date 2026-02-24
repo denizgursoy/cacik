@@ -214,7 +214,7 @@ func (e *StepExecutor) executeScenarioWithBackground(scenario *messages.Scenario
 	}
 
 	for _, step := range scenario.Steps {
-		if err := e.ExecuteStep(step.Text); err != nil {
+		if err := e.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			return fmt.Errorf("step %q failed: %w", step.Text, err)
 		}
 	}
@@ -224,7 +224,7 @@ func (e *StepExecutor) executeScenarioWithBackground(scenario *messages.Scenario
 func (e *StepExecutor) executeBackground(background *messages.Background) error {
 	if background != nil {
 		for _, step := range background.Steps {
-			if err := e.ExecuteStep(step.Text); err != nil {
+			if err := e.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 				return fmt.Errorf("background step %q failed: %w", step.Text, err)
 			}
 		}
@@ -235,11 +235,12 @@ func (e *StepExecutor) executeBackground(background *messages.Background) error 
 // ExecuteStep finds and executes a matching step definition (exported for parallel execution)
 // Deprecated: Use ExecuteStepWithKeyword instead
 func (e *StepExecutor) ExecuteStep(stepText string) error {
-	return e.ExecuteStepWithKeyword("", stepText)
+	return e.ExecuteStepWithKeyword("", stepText, nil)
 }
 
-// ExecuteStepWithKeyword finds and executes a matching step definition with keyword for reporting
-func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
+// ExecuteStepWithKeyword finds and executes a matching step definition with keyword for reporting.
+// If the step has a DataTable, pass it as dataTable; otherwise pass nil.
+func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string, dataTable *messages.DataTable) error {
 	for _, stepDef := range e.steps {
 		matches := stepDef.Pattern.FindStringSubmatch(stepText)
 		if matches == nil {
@@ -285,7 +286,7 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 					stepErr = fmt.Errorf("step assertion failed")
 				}
 			}()
-			stepErr = e.invokeStepFunction(stepDef.Function, capturedArgs)
+			stepErr = e.invokeStepFunction(stepDef.Function, capturedArgs, dataTable)
 		}()
 
 		// Execute AfterStep hooks
@@ -322,12 +323,12 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string) error {
 }
 
 // invokeStepFunction calls the step function with proper argument conversion
-func (e *StepExecutor) invokeStepFunction(fn any, args []string) error {
+func (e *StepExecutor) invokeStepFunction(fn any, args []string, dataTable *messages.DataTable) error {
 	fnValue := reflect.ValueOf(fn)
 	fnType := fnValue.Type()
 
 	// Build argument list
-	callArgs, err := e.buildCallArgs(fnType, args)
+	callArgs, err := e.buildCallArgs(fnType, args, dataTable)
 	if err != nil {
 		return err
 	}
@@ -346,8 +347,11 @@ func (e *StepExecutor) invokeStepFunction(fn any, args []string) error {
 // cacikContextType is the reflect type for *cacik.Context
 var cacikContextType = reflect.TypeOf((*cacik.Context)(nil))
 
+// tableType is the reflect type for cacik.Table
+var tableType = reflect.TypeOf(cacik.Table{})
+
 // buildCallArgs constructs the argument slice for function invocation
-func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string) ([]reflect.Value, error) {
+func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string, dataTable *messages.DataTable) ([]reflect.Value, error) {
 	numParams := fnType.NumIn()
 	callArgs := make([]reflect.Value, 0, numParams)
 
@@ -359,6 +363,16 @@ func (e *StepExecutor) buildCallArgs(fnType reflect.Type, capturedArgs []string)
 		// Check if this parameter is *cacik.Context
 		if paramType == cacikContextType {
 			callArgs = append(callArgs, reflect.ValueOf(e.cacikCtx))
+			continue
+		}
+
+		// Check if this parameter is cacik.Table
+		if paramType == tableType {
+			if dataTable == nil {
+				return nil, fmt.Errorf("step function expects a cacik.Table parameter but the step has no DataTable")
+			}
+			table := cacik.NewTableFromDataTable(dataTable)
+			callArgs = append(callArgs, reflect.ValueOf(table))
 			continue
 		}
 

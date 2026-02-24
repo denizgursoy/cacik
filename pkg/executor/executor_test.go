@@ -1822,6 +1822,204 @@ func TestStepExecutor_Execute_ComplexFeatureStructure(t *testing.T) {
 }
 
 // =============================================================================
+// DataTable Injection Tests
+// =============================================================================
+
+func TestStepExecutor_DataTableInjection(t *testing.T) {
+	t.Run("injects Table when step has DataTable", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTable cacik.Table
+
+		err := exec.RegisterStep("^I have the following users$", func(ctx *cacik.Context, table cacik.Table) {
+			capturedTable = table
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("I have the following users", [][]string{
+			{"name", "age"},
+			{"Alice", "30"},
+			{"Bob", "25"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+
+		require.Equal(t, 3, capturedTable.Len())
+		require.Equal(t, []string{"name", "age"}, capturedTable.Headers())
+
+		// Check data via SkipHeader + Get
+		var names []string
+		var ages []string
+		for _, row := range capturedTable.SkipHeader() {
+			names = append(names, row.Get("name"))
+			ages = append(ages, row.Get("age"))
+		}
+		require.Equal(t, []string{"Alice", "Bob"}, names)
+		require.Equal(t, []string{"30", "25"}, ages)
+	})
+
+	t.Run("injects Table with Context and regex capture args", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedCount int
+		var capturedTable cacik.Table
+
+		err := exec.RegisterStep("^I have (\\d+) items with details$", func(ctx *cacik.Context, count int, table cacik.Table) {
+			capturedCount = count
+			capturedTable = table
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("I have 3 items with details", [][]string{
+			{"item", "price"},
+			{"apple", "1.50"},
+			{"banana", "0.75"},
+			{"cherry", "2.00"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+
+		require.Equal(t, 3, capturedCount)
+		require.Equal(t, 4, capturedTable.Len())
+		require.Equal(t, []string{"item", "price"}, capturedTable.Headers())
+	})
+
+	t.Run("injects Table without Context parameter", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedTable cacik.Table
+
+		err := exec.RegisterStep("^a table without context$", func(table cacik.Table) {
+			capturedTable = table
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("a table without context", [][]string{
+			{"col1", "col2"},
+			{"a", "b"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+
+		require.Equal(t, 2, capturedTable.Len())
+	})
+
+	t.Run("errors when function expects Table but step has no DataTable", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		err := exec.RegisterStep("^a step expecting table$", func(ctx *cacik.Context, table cacik.Table) {
+		})
+		require.NoError(t, err)
+
+		// Use createDocument which creates steps without DataTable
+		doc := createDocument("a step expecting table")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "no DataTable")
+	})
+
+	t.Run("step without Table parameter works with DataTable present", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedText string
+
+		err := exec.RegisterStep("^a step that ignores table (.+)$", func(ctx *cacik.Context, text string) {
+			capturedText = text
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("a step that ignores table hello", [][]string{
+			{"key", "value"},
+			{"a", "1"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "hello", capturedText)
+	})
+
+	t.Run("Table All iterates all rows including header", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var allCells []string
+
+		err := exec.RegisterStep("^check all rows$", func(table cacik.Table) {
+			for _, row := range table.All() {
+				allCells = append(allCells, row.Cell(0))
+			}
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("check all rows", [][]string{
+			{"header"},
+			{"data1"},
+			{"data2"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"header", "data1", "data2"}, allCells)
+	})
+
+	t.Run("Table SkipHeader skips first row", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var dataCells []string
+
+		err := exec.RegisterStep("^check data rows$", func(table cacik.Table) {
+			for _, row := range table.SkipHeader() {
+				dataCells = append(dataCells, row.Cell(0))
+			}
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("check data rows", [][]string{
+			{"header"},
+			{"data1"},
+			{"data2"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"data1", "data2"}, dataCells)
+	})
+
+	t.Run("Row.Get is case-insensitive", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var result string
+
+		err := exec.RegisterStep("^check case insensitive get$", func(table cacik.Table) {
+			for _, row := range table.SkipHeader() {
+				result = row.Get("NaMe")
+			}
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("check case insensitive get", [][]string{
+			{"name", "age"},
+			{"Alice", "30"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "Alice", result)
+	})
+
+	t.Run("Table with Context and multiple capture groups and Table", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedA, capturedB string
+		var capturedTable cacik.Table
+
+		err := exec.RegisterStep("^user (.+) buys (.+) with receipt$", func(ctx *cacik.Context, a, b string, table cacik.Table) {
+			capturedA = a
+			capturedB = b
+			capturedTable = table
+		})
+		require.NoError(t, err)
+
+		doc := createDocumentWithDataTable("user Alice buys apples with receipt", [][]string{
+			{"item", "qty"},
+			{"apple", "5"},
+		})
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "Alice", capturedA)
+		require.Equal(t, "apples", capturedB)
+		require.Equal(t, 2, capturedTable.Len())
+	})
+}
+
+// =============================================================================
 // Helper Functions for Rule and Background Documents
 // =============================================================================
 
@@ -2114,6 +2312,35 @@ func createComplexDocument(featureBgSteps, standaloneScenarioSteps, ruleScenario
 						Children: []*messages.RuleChild{
 							{
 								Scenario: &messages.Scenario{Steps: ruleStepsMsg},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// createDocumentWithDataTable creates a document with a single step that has an attached DataTable
+func createDocumentWithDataTable(stepText string, tableData [][]string) *messages.GherkinDocument {
+	rows := make([]*messages.TableRow, len(tableData))
+	for i, rowData := range tableData {
+		cells := make([]*messages.TableCell, len(rowData))
+		for j, val := range rowData {
+			cells[j] = &messages.TableCell{Value: val}
+		}
+		rows[i] = &messages.TableRow{Cells: cells}
+	}
+
+	return &messages.GherkinDocument{
+		Feature: &messages.Feature{
+			Children: []*messages.FeatureChild{
+				{
+					Scenario: &messages.Scenario{
+						Steps: []*messages.Step{
+							{
+								Text:      stepText,
+								DataTable: &messages.DataTable{Rows: rows},
 							},
 						},
 					},

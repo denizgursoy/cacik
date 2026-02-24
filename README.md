@@ -372,6 +372,121 @@ func MyStep(count int, name string) {}
 func MyStep(ctx *cacik.Context, color Color) {}
 ```
 
+### DataTables
+
+When a Gherkin step has an attached DataTable, cacik converts it to a `cacik.Table` and auto-injects it into your step function, just like `*cacik.Context`.
+
+```gherkin
+Feature: User management
+
+  Scenario: Create users
+    Given the following users:
+      | name  | age |
+      | Alice | 30  |
+      | Bob   | 25  |
+```
+
+```go
+// @cacik `^the following users:$`
+func TheFollowingUsers(ctx *cacik.Context, table cacik.Table) {
+    for _, row := range table.SkipHeader() {
+        name := row.Get("name")
+        age := row.Get("age")
+        ctx.Logger().Info("user", "name", name, "age", age)
+    }
+}
+```
+
+The `cacik.Table` parameter can appear anywhere in the function signature alongside `*cacik.Context` and regex capture arguments:
+
+```gherkin
+Feature: Inventory
+
+  Scenario: Add items with details
+    Given I have 3 items:
+      | item   | price |
+      | apple  | 1.50  |
+      | banana | 0.75  |
+      | cherry | 2.00  |
+```
+
+```go
+// @cacik `^I have (\d+) items:$`
+func IHaveItems(ctx *cacik.Context, count int, table cacik.Table) {
+    ctx.Logger().Info("items", "count", count)
+    for _, row := range table.SkipHeader() {
+        ctx.Logger().Info("item", "name", row.Get("item"), "price", row.Get("price"))
+    }
+}
+```
+
+If a step function declares a `cacik.Table` parameter but the step has no DataTable attached, execution fails with an error.
+
+#### Iterating Rows
+
+`Table` provides two iterators using Go 1.24's range-over-func:
+
+- **`All()`** - iterates over all rows including the header row
+- **`SkipHeader()`** - iterates over data rows only (skips the first row)
+
+Both return `iter.Seq2[int, Row]` where the int is a 0-based index.
+
+```go
+// Iterate all rows (including header)
+for i, row := range table.All() {
+    fmt.Println(i, row.Cell(0))
+}
+
+// Iterate data rows only (skip header)
+for i, row := range table.SkipHeader() {
+    name := row.Get("name")
+    fmt.Println(i, name)
+}
+```
+
+#### Row Access Methods
+
+| Method | Description |
+|--------|-------------|
+| `row.Get(col)` | Lookup by column header name (case-insensitive) |
+| `row.Cell(index)` | Lookup by column index (0-based) |
+| `row.Values()` | Returns all cell values as `[]string` |
+| `row.Len()` | Number of cells in the row |
+
+#### Table Methods
+
+| Method | Description |
+|--------|-------------|
+| `table.Headers()` | Returns column headers (first row values) |
+| `table.Len()` | Total number of rows (including header) |
+| `table.All()` | Iterator over all rows |
+| `table.SkipHeader()` | Iterator over data rows only |
+
+#### Headerless Tables
+
+For tables without a meaningful header row, use `Cell(index)` for positional access:
+
+```gherkin
+Feature: Geometry
+
+  Scenario: Plot coordinates
+    Given the coordinates are:
+      | 10 | 20 |
+      | 30 | 40 |
+      | 50 | 60 |
+```
+
+```go
+// @cacik `^the coordinates are:$`
+func Coordinates(table cacik.Table) {
+    for _, row := range table.All() {
+        x := row.Cell(0)
+        y := row.Cell(1)
+        fmt.Println(x, y)
+    }
+}
+```
+
 ## Context API
 
 The `*cacik.Context` provides logging, assertions, and state management for BDD tests.

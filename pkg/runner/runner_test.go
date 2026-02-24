@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"sync"
 	"testing"
@@ -713,6 +714,86 @@ func TestCucumberRunner_RuleWithBackground(t *testing.T) {
 
 	t.Run("executes rules with backgrounds via testing.T parallel subtests", func(t *testing.T) {
 		runner := newRuleRunner(nil).WithTestingT(t)
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+}
+
+// newTableRunner creates a CucumberRunner wired to testdata/with-table
+// with step definitions needed by table.feature.
+func newTableRunner(onUsers func([]string)) *CucumberRunner {
+	if onUsers == nil {
+		onUsers = func([]string) {}
+	}
+
+	var userCount int
+
+	return NewCucumberRunner().
+		WithFeaturesDirectories("testdata/with-table").
+		RegisterStep(`^the following users:$`, func(ctx *cacik.Context, table cacik.Table) {
+			var names []string
+			for _, row := range table.SkipHeader() {
+				names = append(names, row.Get("name"))
+			}
+			userCount = len(names)
+			onUsers(names)
+		}).
+		RegisterStep(`^there should be (\d+) users$`, func(ctx *cacik.Context, expected int) error {
+			if userCount != expected {
+				return fmt.Errorf("expected %d users, got %d", expected, userCount)
+			}
+			return nil
+		})
+}
+
+func TestCucumberRunner_DataTable(t *testing.T) {
+	t.Run("executes step with DataTable sequentially", func(t *testing.T) {
+		var capturedNames []string
+
+		runner := newTableRunner(func(names []string) {
+			capturedNames = names
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			require.Equal(t, []string{"Alice", "Bob"}, capturedNames)
+		})
+	})
+
+	t.Run("executes step with DataTable in parallel", func(t *testing.T) {
+		var mu sync.Mutex
+		var capturedNames []string
+
+		runner := newTableRunner(func(names []string) {
+			mu.Lock()
+			capturedNames = names
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+			mu.Lock()
+			require.Equal(t, []string{"Alice", "Bob"}, capturedNames)
+			mu.Unlock()
+		})
+	})
+
+	t.Run("executes step with DataTable via testing.T", func(t *testing.T) {
+		runner := newTableRunner(nil).WithTestingT(t)
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+
+	t.Run("executes step with DataTable via testing.T parallel", func(t *testing.T) {
+		runner := newTableRunner(nil).WithTestingT(t)
 
 		withArgs([]string{"cmd", "--parallel", "2"}, func() {
 			err := runner.Run()
