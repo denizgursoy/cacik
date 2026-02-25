@@ -258,9 +258,12 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string, dataTabl
 			matchLocs = idxMatches[2:] // skip full-match pair
 		}
 
+		// Build Step for hook functions
+		cacikStep := cacik.Step{Keyword: keyword, Text: stepText}
+
 		// Execute BeforeStep hooks
 		if e.hookExecutor != nil {
-			e.hookExecutor.ExecuteBeforeStep()
+			e.hookExecutor.ExecuteBeforeStep(cacikStep)
 		}
 
 		// Execute step with panic recovery and runtime.Goexit detection
@@ -291,7 +294,7 @@ func (e *StepExecutor) ExecuteStepWithKeyword(keyword, stepText string, dataTabl
 
 		// Execute AfterStep hooks
 		if e.hookExecutor != nil {
-			e.hookExecutor.ExecuteAfterStep()
+			e.hookExecutor.ExecuteAfterStep(cacikStep, stepErr)
 		}
 
 		// Report step result

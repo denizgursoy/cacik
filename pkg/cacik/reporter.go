@@ -17,7 +17,8 @@ const (
 	colorText         = "\033[38;2;188;190;196m" // #BCBEC4 — step text, feature/scenario names
 	colorParam        = "\033[38;2;92;146;255m"  // #5C92FF — captured step parameters, table data cells
 	colorOutlineParam = "\033[38;2;199;125;187m" // #C77DBB — <placeholder> params, table header cells
-	colorYellow       = "\033[33m"               // skipped steps
+	colorSkipped      = "\033[38;2;111;115;122m" // #6F737A — skipped step text
+	colorYellow       = "\033[33m"               // skipped step symbol
 )
 
 // Symbols for step status
@@ -268,9 +269,11 @@ func (r *ConsoleReporter) StepFailed(keyword, text string, errMsg string, matchL
 	}
 }
 
-// StepSkipped prints a skipped step with yellow dash
+// StepSkipped prints a skipped step with dimmed text and yellow dash
 func (r *ConsoleReporter) StepSkipped(keyword, text string) {
-	step := r.formatStep(keyword, text, nil)
+	coloredKeyword := r.color(colorSkipped, keyword)
+	coloredText := r.color(colorSkipped, text)
+	step := fmt.Sprintf("    %s%s", coloredKeyword, coloredText)
 	symbol := r.color(colorYellow, symbolSkip)
 	r.writeln(fmt.Sprintf("%-60s %s", step, symbol))
 }

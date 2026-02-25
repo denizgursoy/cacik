@@ -22,6 +22,7 @@ type (
 	CucumberRunner struct {
 		config             *cacik.Config
 		hooks              []*cacik.Hooks
+		hookExecutor       *cacik.HookExecutor
 		featureDirectories []string
 		executor           *executor.StepExecutor
 		logger             cacik.Logger
@@ -123,13 +124,13 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Create hook executor
-	hookExecutor := cacik.NewHookExecutor(c.hooks...)
+	c.hookExecutor = cacik.NewHookExecutor(c.hooks...)
 
 	// Execute BeforeAll hooks
-	hookExecutor.ExecuteBeforeAll()
+	c.hookExecutor.ExecuteBeforeAll()
 
 	// Ensure AfterAll hooks run even on error
-	defer hookExecutor.ExecuteAfterAll()
+	defer c.hookExecutor.ExecuteAfterAll()
 
 	// Parse tag expression from CLI arguments
 	tagExpr := parseTagsFromArgs()
@@ -173,7 +174,7 @@ func (c *CucumberRunner) Run() error {
 
 	// If *testing.T is set, use t.Run() subtests
 	if c.t != nil {
-		return c.runWithTestingT(docs, workers, failFast, useColors, disableReporter, hookExecutor)
+		return c.runWithTestingT(docs, workers, failFast, useColors, disableReporter, c.hookExecutor)
 	}
 
 	// If parallel execution is requested
@@ -231,7 +232,7 @@ func (c *CucumberRunner) Run() error {
 	c.executor.SetCacikContext(ctx)
 
 	// Store hook executor in runner for step hooks
-	c.executor.SetHookExecutor(hookExecutor)
+	c.executor.SetHookExecutor(c.hookExecutor)
 
 	// Execute documents with reporter lifecycle calls
 	var runErr error
@@ -330,6 +331,20 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			isolatedExec.SetCacikContext(ctx)
 			isolatedExec.SetHookExecutor(hookExecutor)
 
+			cacikScenario := cacik.ScenarioFromMessage(scenario.Scenario)
+			var scenarioErr error
+
+			// Execute BeforeScenario hooks
+			if hookExecutor != nil {
+				hookExecutor.ExecuteBeforeScenario(cacikScenario)
+			}
+			// Ensure AfterScenario hooks always run
+			defer func() {
+				if hookExecutor != nil {
+					hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
+				}
+			}()
+
 			scenarioPassed := true
 
 			// Execute feature background
@@ -338,6 +353,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 				for i, step := range scenario.FeatureBackground.Steps {
 					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 						scenarioPassed = false
+						scenarioErr = err
 						// Skip remaining background steps
 						for j := i + 1; j < len(scenario.FeatureBackground.Steps); j++ {
 							remainingStep := scenario.FeatureBackground.Steps[j]
@@ -365,6 +381,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 				for i, step := range scenario.RuleBackground.Steps {
 					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 						scenarioPassed = false
+						scenarioErr = err
 						// Skip remaining background steps
 						for j := i + 1; j < len(scenario.RuleBackground.Steps); j++ {
 							remainingStep := scenario.RuleBackground.Steps[j]
@@ -391,6 +408,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 			for i, step := range scenario.Scenario.Steps {
 				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 					scenarioPassed = false
+					scenarioErr = err
 					// Skip remaining steps
 					for j := i + 1; j < len(scenario.Scenario.Steps); j++ {
 						remainingStep := scenario.Scenario.Steps[j]
@@ -461,6 +479,12 @@ func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBac
 					reporter.BackgroundStart()
 					if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
 						// Mark scenario as failed since background failed
+						cacikScenario := cacik.ScenarioFromMessage(expanded)
+						bgErr := fmt.Errorf("feature background failed: %w", err)
+						if c.hookExecutor != nil {
+							c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
+							c.hookExecutor.ExecuteAfterScenario(cacikScenario, bgErr)
+						}
 						reporter.AddScenarioResult(false)
 						if failFast {
 							return fmt.Errorf("scenario %q failed: %w", expanded.Name, err)
@@ -480,11 +504,27 @@ func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBac
 
 // executeScenarioWithReporter executes a scenario with reporter lifecycle calls
 func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario, background *messages.Background, ruleBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
+	cacikScenario := cacik.ScenarioFromMessage(scenario)
+
+	// Execute BeforeScenario hooks
+	if c.hookExecutor != nil {
+		c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
+	}
+
+	var scenarioErr error
+	defer func() {
+		// Execute AfterScenario hooks (always runs)
+		if c.hookExecutor != nil {
+			c.hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
+		}
+	}()
+
 	// Execute background if present
 	if background != nil {
 		reporter.BackgroundStart()
 		if err := c.executeBackgroundStepsWithReporter(background, reporter); err != nil {
 			// Background failed - skip scenario steps and mark remaining as skipped
+			scenarioErr = fmt.Errorf("background step failed")
 			reporter.ScenarioStart(scenario.Name)
 			for _, step := range scenario.Steps {
 				reporter.StepSkipped(step.Keyword, step.Text)
@@ -502,7 +542,6 @@ func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario
 	reporter.ScenarioStart(scenario.Name)
 
 	scenarioPassed := true
-	var scenarioErr error
 	for i, step := range scenario.Steps {
 		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
 			scenarioPassed = false
@@ -1027,6 +1066,25 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 	// Clone executor and set context
 	isolatedExec := c.executor.Clone()
 	isolatedExec.SetCacikContext(ctx)
+	if c.hookExecutor != nil {
+		isolatedExec.SetHookExecutor(c.hookExecutor)
+	}
+
+	// Build cacik.Scenario for hooks
+	cacikScenario := cacik.ScenarioFromMessage(exec.Scenario)
+
+	// Execute BeforeScenario hooks
+	if c.hookExecutor != nil {
+		c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
+	}
+
+	var execErr error
+	defer func() {
+		// Execute AfterScenario hooks (always runs, even on early return)
+		if c.hookExecutor != nil {
+			c.hookExecutor.ExecuteAfterScenario(cacikScenario, execErr)
+		}
+	}()
 
 	// Print feature header
 	reporter.FeatureStart(exec.FeatureName)
@@ -1037,7 +1095,6 @@ func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecut
 	}
 
 	scenarioPassed := true
-	var execErr error
 
 	// Execute feature background
 	if exec.FeatureBackground != nil {

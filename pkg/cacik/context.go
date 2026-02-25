@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	"github.com/google/uuid"
 )
 
 // T is the test interface used for assertion failures.
@@ -59,6 +61,7 @@ func (d *Data) MustGet(key string) any {
 // Context is the execution context passed to all step functions.
 // It provides logging, assertions, and state management for BDD tests.
 type Context struct {
+	id       string
 	ctx      context.Context
 	t        T
 	logger   Logger
@@ -71,6 +74,7 @@ type Context struct {
 func New(opts ...Option) *Context {
 	t := &panicT{}
 	c := &Context{
+		id:     uuid.New().String(),
 		ctx:    context.Background(),
 		t:      t,
 		assert: &Assert{t: t},
@@ -92,6 +96,12 @@ func New(opts ...Option) *Context {
 // Context returns the underlying context.Context for library compatibility.
 func (c *Context) Context() context.Context {
 	return c.ctx
+}
+
+// ID returns the unique identifier for this context.
+// Each scenario execution gets a fresh context with a unique UUID.
+func (c *Context) ID() string {
+	return c.id
 }
 
 // WithContext updates the underlying context.Context.

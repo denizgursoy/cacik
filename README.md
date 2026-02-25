@@ -588,6 +588,21 @@ func MyStep(ctx *cacik.Context) {
 }
 ```
 
+### Scenario ID
+
+Each scenario execution gets a unique UUID (v4) via `ctx.ID()`. This is useful for correlating logs, creating unique test resources, or tagging external systems per scenario:
+
+```go
+// @cacik `^I create a test user$`
+func CreateTestUser(ctx *cacik.Context) {
+    username := fmt.Sprintf("test-user-%s", ctx.ID())
+    ctx.Logger().Info("creating user", "id", ctx.ID(), "username", username)
+    ctx.Data().Set("username", username)
+}
+```
+
+When running in parallel, each scenario has its own context with a distinct ID, so there is no risk of collision.
+
 ## Install
 
 ```shell
@@ -809,7 +824,10 @@ Cacik automatically discovers functions returning `*cacik.Hooks` for lifecycle h
 ```go
 package database
 
-import "github.com/denizgursoy/cacik/pkg/cacik"
+import (
+	"fmt"
+	"github.com/denizgursoy/cacik/pkg/cacik"
+)
 
 // DatabaseHooks sets up database connection
 func DatabaseHooks() *cacik.Hooks {
@@ -821,11 +839,27 @@ func DatabaseHooks() *cacik.Hooks {
 		AfterAll: func() {
 			// Close database connection (runs once after all scenarios)
 		},
-		BeforeStep: func() {
-			// Runs before each step
+		BeforeScenario: func(s cacik.Scenario) {
+			// Runs before each scenario
+			fmt.Println("Starting scenario:", s.Name)
 		},
-		AfterStep: func() {
+		AfterScenario: func(s cacik.Scenario, err error) {
+			// Runs after each scenario (always runs, even on failure)
+			// err is nil on success, non-nil on failure
+			if err != nil {
+				fmt.Println("Scenario failed:", s.Name, err)
+			}
+		},
+		BeforeStep: func(s cacik.Step) {
+			// Runs before each step
+			fmt.Println("Running step:", s.Keyword+s.Text)
+		},
+		AfterStep: func(s cacik.Step, err error) {
 			// Runs after each step
+			// err is nil on success, non-nil on failure
+			if err != nil {
+				fmt.Println("Step failed:", s.Text, err)
+			}
 		},
 	}
 }
@@ -850,13 +884,52 @@ func APIHooks() *cacik.Hooks {
 }
 ```
 
+### Hook Types
+
+#### Scenario and Step Info
+
+Scenario and step hooks receive metadata about the currently executing scenario or step:
+
+```go
+// cacik.Scenario — passed to BeforeScenario/AfterScenario
+type Scenario struct {
+    Name        string   // Scenario name (e.g. "User login")
+    Tags        []string // Tags including inherited (e.g. "@smoke", "@auth")
+    Description string   // Optional description text
+    Keyword     string   // "Scenario" or "Scenario Outline"
+    Line        int64    // Source file line number
+}
+
+// cacik.Step — passed to BeforeStep/AfterStep
+type Step struct {
+    Keyword string // Gherkin keyword with trailing space (e.g. "Given ", "When ")
+    Text    string // Step text after keyword (e.g. "the user is logged in")
+    Line    int64  // Source file line number
+}
+```
+
+#### AfterScenario Always Runs
+
+`AfterScenario` is guaranteed to run even if background steps or scenario steps fail. This makes it safe for cleanup logic (closing connections, resetting state, etc.):
+
+```go
+BeforeScenario: func(s cacik.Scenario) {
+    db.Begin() // start transaction
+},
+AfterScenario: func(s cacik.Scenario, err error) {
+    db.Rollback() // always rolls back, even on failure
+},
+```
+
 ### Hook Execution Order
 
 1. **BeforeAll**: All hooks execute in `Order` ascending (0, 10, 20, ...)
-2. **BeforeStep**: All hooks execute in `Order` ascending (before each step)
-3. Step executes
-4. **AfterStep**: All hooks execute in `Order` ascending (after each step)
-5. **AfterAll**: All hooks execute in `Order` ascending (after all scenarios)
+2. **BeforeScenario**: All hooks execute in `Order` ascending (before each scenario)
+3. **BeforeStep**: All hooks execute in `Order` ascending (before each step)
+4. Step executes
+5. **AfterStep**: All hooks execute in `Order` ascending (after each step, receives step error)
+6. **AfterScenario**: All hooks execute in `Order` ascending (after each scenario, receives scenario error)
+7. **AfterAll**: All hooks execute in `Order` ascending (after all scenarios)
 
 ### Hooks Fields
 
@@ -865,5 +938,7 @@ func APIHooks() *cacik.Hooks {
 | `Order` | `int` | Execution order (lower = first, default: 0) |
 | `BeforeAll` | `func()` | Runs once before all scenarios |
 | `AfterAll` | `func()` | Runs once after all scenarios |
-| `BeforeStep` | `func()` | Runs before each step |
-| `AfterStep` | `func()` | Runs after each step |
+| `BeforeScenario` | `func(Scenario)` | Runs before each scenario |
+| `AfterScenario` | `func(Scenario, error)` | Runs after each scenario (always runs; error is nil on success) |
+| `BeforeStep` | `func(Step)` | Runs before each step |
+| `AfterStep` | `func(Step, error)` | Runs after each step (error is nil on success) |

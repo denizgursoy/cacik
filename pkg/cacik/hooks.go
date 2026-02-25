@@ -15,11 +15,21 @@ type Hooks struct {
 	// AfterAll runs once after all scenarios.
 	AfterAll func()
 
+	// BeforeScenario runs before each scenario.
+	// The Scenario argument contains the scenario metadata (name, tags, etc.).
+	BeforeScenario func(Scenario)
+
+	// AfterScenario runs after each scenario.
+	// The error is nil when the scenario passed, non-nil on failure.
+	AfterScenario func(Scenario, error)
+
 	// BeforeStep runs before each step.
-	BeforeStep func()
+	// The Step argument contains the step metadata (keyword, text, etc.).
+	BeforeStep func(Step)
 
 	// AfterStep runs after each step.
-	AfterStep func()
+	// The error is nil when the step passed, non-nil on failure.
+	AfterStep func(Step, error)
 }
 
 // SortHooks sorts hooks by Order (ascending).
@@ -73,20 +83,38 @@ func (e *HookExecutor) ExecuteAfterAll() {
 	}
 }
 
+// ExecuteBeforeScenario executes all BeforeScenario hooks in order.
+func (e *HookExecutor) ExecuteBeforeScenario(scenario Scenario) {
+	for _, h := range e.hooks {
+		if h.BeforeScenario != nil {
+			h.BeforeScenario(scenario)
+		}
+	}
+}
+
+// ExecuteAfterScenario executes all AfterScenario hooks in order.
+func (e *HookExecutor) ExecuteAfterScenario(scenario Scenario, err error) {
+	for _, h := range e.hooks {
+		if h.AfterScenario != nil {
+			h.AfterScenario(scenario, err)
+		}
+	}
+}
+
 // ExecuteBeforeStep executes all BeforeStep hooks in order.
-func (e *HookExecutor) ExecuteBeforeStep() {
+func (e *HookExecutor) ExecuteBeforeStep(step Step) {
 	for _, h := range e.hooks {
 		if h.BeforeStep != nil {
-			h.BeforeStep()
+			h.BeforeStep(step)
 		}
 	}
 }
 
 // ExecuteAfterStep executes all AfterStep hooks in order.
-func (e *HookExecutor) ExecuteAfterStep() {
+func (e *HookExecutor) ExecuteAfterStep(step Step, err error) {
 	for _, h := range e.hooks {
 		if h.AfterStep != nil {
-			h.AfterStep()
+			h.AfterStep(step, err)
 		}
 	}
 }

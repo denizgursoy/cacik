@@ -44,6 +44,7 @@ func TestNew(t *testing.T) {
 		require.NotNil(t, ctx.Logger())
 		require.NotNil(t, ctx.Assert())
 		require.NotNil(t, ctx.Data())
+		require.NotEmpty(t, ctx.ID())
 	})
 
 	t.Run("creates context with custom logger", func(t *testing.T) {
@@ -115,6 +116,30 @@ func TestContext_WithContext(t *testing.T) {
 		ctx.WithContext(newStdCtx)
 
 		require.Equal(t, "value", ctx.Context().Value("key"))
+	})
+}
+
+func TestContext_ID(t *testing.T) {
+	t.Run("returns a valid UUID string", func(t *testing.T) {
+		ctx := New()
+		id := ctx.ID()
+		require.NotEmpty(t, id)
+		// UUID v4 format: 8-4-4-4-12 hex chars
+		require.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, id)
+	})
+
+	t.Run("each context gets a unique ID", func(t *testing.T) {
+		ctx1 := New()
+		ctx2 := New()
+		ctx3 := New()
+		require.NotEqual(t, ctx1.ID(), ctx2.ID())
+		require.NotEqual(t, ctx2.ID(), ctx3.ID())
+		require.NotEqual(t, ctx1.ID(), ctx3.ID())
+	})
+
+	t.Run("ID is stable across multiple calls", func(t *testing.T) {
+		ctx := New()
+		require.Equal(t, ctx.ID(), ctx.ID())
 	})
 }
 

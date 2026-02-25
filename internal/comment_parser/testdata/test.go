@@ -17,5 +17,23 @@ func MyHooks() *cacik.Hooks {
 		BeforeAll: func() {
 			// setup
 		},
+		BeforeScenario: func(s cacik.Scenario) {
+			// runs before each scenario
+			_ = s.Name
+		},
+		AfterScenario: func(s cacik.Scenario, err error) {
+			// runs after each scenario (always runs)
+			_ = s.Name
+			_ = err
+		},
+		BeforeStep: func(s cacik.Step) {
+			// runs before each step
+			_ = s.Text
+		},
+		AfterStep: func(s cacik.Step, err error) {
+			// runs after each step
+			_ = s.Text
+			_ = err
+		},
 	}
 }
