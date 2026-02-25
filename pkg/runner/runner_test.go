@@ -838,3 +838,271 @@ func TestCucumberRunner_DataTable(t *testing.T) {
 		})
 	})
 }
+
+// =============================================================================
+// Scenario Outline Tests
+// =============================================================================
+
+// outlineEvent records a step invocation during Scenario Outline execution.
+type outlineEvent struct {
+	Step string
+	Args []string
+}
+
+// newOutlineRunner creates a CucumberRunner wired to testdata/scenario-outline/outline.feature.
+// The onEvent callback records every step invocation so the test can verify
+// placeholder substitution, DataTable expansion, and execution order.
+func newOutlineRunner(t *testing.T, onEvent func(outlineEvent)) *CucumberRunner {
+	t.Helper()
+	if onEvent == nil {
+		onEvent = func(outlineEvent) {}
+	}
+
+	return NewCucumberRunner().
+		WithFeaturesDirectories("testdata/scenario-outline").
+		RegisterStep(`^the application is started$`, func(ctx *cacik.Context) {
+			onEvent(outlineEvent{Step: "app started"})
+		}).
+		RegisterStep(`^user "([^"]*)" exists with role "([^"]*)"$`, func(ctx *cacik.Context, user, role string) {
+			onEvent(outlineEvent{Step: "user exists", Args: []string{user, role}})
+		}).
+		RegisterStep(`^user "([^"]*)" logs in with password "([^"]*)"$`, func(ctx *cacik.Context, user, pass string) {
+			onEvent(outlineEvent{Step: "login", Args: []string{user, pass}})
+		}).
+		RegisterStep(`^the login result should be "([^"]*)"$`, func(ctx *cacik.Context, result string) {
+			onEvent(outlineEvent{Step: "login result", Args: []string{result}})
+		}).
+		RegisterStep(`^the user role should be "([^"]*)"$`, func(ctx *cacik.Context, role string) {
+			onEvent(outlineEvent{Step: "user role", Args: []string{role}})
+		}).
+		RegisterStep(`^I assign permissions to "([^"]*)":$`, func(ctx *cacik.Context, user string, table cacik.Table) {
+			var perms []string
+			for _, row := range table.SkipHeader() {
+				perms = append(perms, row.Get("permission")+":"+row.Get("granted"))
+			}
+			onEvent(outlineEvent{Step: "assign permissions", Args: append([]string{user}, perms...)})
+		}).
+		RegisterStep(`^user "([^"]*)" should have (\d+) permissions$`, func(ctx *cacik.Context, user string, count int) {
+			onEvent(outlineEvent{Step: "has permissions", Args: []string{user, fmt.Sprintf("%d", count)}})
+		}).
+		RegisterStep(`^the application is running$`, func(ctx *cacik.Context) {
+			onEvent(outlineEvent{Step: "app running"})
+		}).
+		RegisterStep(`^I check the status$`, func(ctx *cacik.Context) {
+			onEvent(outlineEvent{Step: "check status"})
+		}).
+		RegisterStep(`^the status code should be (\d+)$`, func(ctx *cacik.Context, code int) {
+			onEvent(outlineEvent{Step: "status code", Args: []string{fmt.Sprintf("%d", code)}})
+		}).
+		RegisterStep(`^the access control module is loaded$`, func(ctx *cacik.Context) {
+			onEvent(outlineEvent{Step: "acl loaded"})
+		}).
+		RegisterStep(`^user "([^"]*)" has role "([^"]*)"$`, func(ctx *cacik.Context, user, role string) {
+			onEvent(outlineEvent{Step: "user has role", Args: []string{user, role}})
+		}).
+		RegisterStep(`^user "([^"]*)" accesses "([^"]*)"$`, func(ctx *cacik.Context, user, resource string) {
+			onEvent(outlineEvent{Step: "accesses", Args: []string{user, resource}})
+		}).
+		RegisterStep(`^access should be "([^"]*)"$`, func(ctx *cacik.Context, decision string) {
+			onEvent(outlineEvent{Step: "access decision", Args: []string{decision}})
+		})
+}
+
+func TestCucumberRunner_ScenarioOutline(t *testing.T) {
+	t.Run("expands all outline examples sequentially", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			// Count login events — 5 rows (3 valid + 2 invalid)
+			loginEvents := filterEvents(events, "login")
+			require.Len(t, loginEvents, 5, "expected 5 login invocations from outline expansion")
+
+			// Verify placeholder substitution for first valid row
+			require.Equal(t, []string{"alice", "secret1"}, loginEvents[0].Args)
+			require.Equal(t, []string{"bob", "secret2"}, loginEvents[1].Args)
+			require.Equal(t, []string{"charlie", "secret3"}, loginEvents[2].Args)
+
+			// Verify invalid credentials rows
+			require.Equal(t, []string{"alice", "wrong"}, loginEvents[3].Args)
+			require.Equal(t, []string{"unknown", "any"}, loginEvents[4].Args)
+
+			// Check login result substitution
+			resultEvents := filterEvents(events, "login result")
+			require.Len(t, resultEvents, 5)
+			require.Equal(t, []string{"success"}, resultEvents[0].Args)
+			require.Equal(t, []string{"failure"}, resultEvents[3].Args)
+
+			// Check role substitution
+			roleEvents := filterEvents(events, "user role")
+			require.Len(t, roleEvents, 5)
+			require.Equal(t, []string{"admin"}, roleEvents[0].Args)
+			require.Equal(t, []string{"editor"}, roleEvents[1].Args)
+			require.Equal(t, []string{"none"}, roleEvents[4].Args)
+		})
+	})
+
+	t.Run("substitutes placeholders inside DataTable cells", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			permEvents := filterEvents(events, "assign permissions")
+			require.Len(t, permEvents, 2, "expected 2 permission assignment invocations")
+
+			// dave: read:true, write:true
+			require.Equal(t, []string{"dave", "read:true", "write:true"}, permEvents[0].Args)
+			// eve: read:true, delete:false
+			require.Equal(t, []string{"eve", "read:true", "delete:false"}, permEvents[1].Args)
+		})
+	})
+
+	t.Run("handles static step text with varying examples", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			statusEvents := filterEvents(events, "status code")
+			require.Len(t, statusEvents, 2)
+			require.Equal(t, []string{"200"}, statusEvents[0].Args)
+			require.Equal(t, []string{"404"}, statusEvents[1].Args)
+		})
+	})
+
+	t.Run("expands outline inside rules with background", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			// 4 rows total in the Rule's outline (2 admin + 2 viewer)
+			accessEvents := filterEvents(events, "access decision")
+			require.Len(t, accessEvents, 4)
+			require.Equal(t, []string{"granted"}, accessEvents[0].Args) // frank admin dashboard
+			require.Equal(t, []string{"granted"}, accessEvents[1].Args) // frank admin settings
+			require.Equal(t, []string{"granted"}, accessEvents[2].Args) // grace viewer dashboard
+			require.Equal(t, []string{"denied"}, accessEvents[3].Args)  // grace viewer settings
+
+			// Feature background should run for each expanded scenario in the rule
+			// Rule has 4 expanded scenarios, so feature background runs 4 times (for rule scenarios)
+			// Plus scenarios outside the rule: 5 login + 2 permission + 2 static = 9
+			// Total app started = 9 + 4 = 13
+			appStartedEvents := filterEvents(events, "app started")
+			require.Len(t, appStartedEvents, 13, "feature background should run for every expanded scenario")
+
+			// Rule background (acl loaded) should run for each expanded scenario in the rule = 4
+			aclEvents := filterEvents(events, "acl loaded")
+			require.Len(t, aclEvents, 4, "rule background should run for each expanded scenario in the rule")
+		})
+	})
+
+	t.Run("runs expanded outlines in parallel", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd", "--parallel", "4"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+			// Same total events regardless of execution mode
+			loginEvents := filterEvents(events, "login")
+			require.Len(t, loginEvents, 5)
+			accessEvents := filterEvents(events, "access decision")
+			require.Len(t, accessEvents, 4)
+		})
+	})
+
+	t.Run("runs expanded outlines via testing.T subtests", func(t *testing.T) {
+		runner := newOutlineRunner(t, nil).WithTestingT(t)
+
+		withArgs([]string{"cmd"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+
+	t.Run("runs expanded outlines via testing.T parallel subtests", func(t *testing.T) {
+		runner := newOutlineRunner(t, nil).WithTestingT(t)
+
+		withArgs([]string{"cmd", "--parallel", "2"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+		})
+	})
+
+	t.Run("filters by examples-level tag", func(t *testing.T) {
+		var mu sync.Mutex
+		var events []outlineEvent
+
+		runner := newOutlineRunner(t, func(e outlineEvent) {
+			mu.Lock()
+			events = append(events, e)
+			mu.Unlock()
+		})
+
+		withArgs([]string{"cmd", "--tags", "@negative"}, func() {
+			err := runner.Run()
+			require.Nil(t, err)
+
+			// Only the @negative Examples rows should execute (2 rows)
+			loginEvents := filterEvents(events, "login")
+			require.Len(t, loginEvents, 2, "only @negative examples should run")
+			require.Equal(t, []string{"alice", "wrong"}, loginEvents[0].Args)
+			require.Equal(t, []string{"unknown", "any"}, loginEvents[1].Args)
+		})
+	})
+}
+
+// filterEvents returns events matching the given step name.
+func filterEvents(events []outlineEvent, step string) []outlineEvent {
+	var result []outlineEvent
+	for _, e := range events {
+		if e.Step == step {
+			result = append(result, e)
+		}
+	}
+	return result
+}

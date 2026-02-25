@@ -433,8 +433,10 @@ func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinD
 				return err
 			}
 		} else if child.Scenario != nil {
-			if err := c.executeScenarioWithReporter(child.Scenario, featureBackground, nil, reporter, failFast); err != nil {
-				return err
+			for _, expanded := range expandScenarioOutline(child.Scenario) {
+				if err := c.executeScenarioWithReporter(expanded, featureBackground, nil, reporter, failFast); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -452,21 +454,24 @@ func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBac
 		if child.Background != nil {
 			ruleBackground = child.Background
 		} else if child.Scenario != nil {
-			// Execute feature background first
-			if featureBackground != nil {
-				reporter.BackgroundStart()
-				if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
-					// Mark scenario as failed since background failed
-					reporter.AddScenarioResult(false)
-					if failFast {
-						return fmt.Errorf("scenario %q failed: %w", child.Scenario.Name, err)
+			// Expand scenario outline and execute each expanded scenario
+			for _, expanded := range expandScenarioOutline(child.Scenario) {
+				// Execute feature background before each expanded scenario
+				if featureBackground != nil {
+					reporter.BackgroundStart()
+					if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
+						// Mark scenario as failed since background failed
+						reporter.AddScenarioResult(false)
+						if failFast {
+							return fmt.Errorf("scenario %q failed: %w", expanded.Name, err)
+						}
+						continue
 					}
-					continue
 				}
-			}
-			// Execute rule background and scenario
-			if err := c.executeScenarioWithReporter(child.Scenario, ruleBackground, nil, reporter, failFast); err != nil {
-				return err
+				// Execute rule background and scenario
+				if err := c.executeScenarioWithReporter(expanded, ruleBackground, nil, reporter, failFast); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -602,10 +607,12 @@ func filterDocumentByTags(doc *messages.GherkinDocument, evaluator tagexpression
 			// Always include backgrounds
 			filteredChildren = append(filteredChildren, child)
 		} else if child.Scenario != nil {
-			// Check if scenario matches tags (inherit feature tags)
-			scenarioTags := mergeTags(featureTags, extractTagNames(child.Scenario.Tags))
-			if evaluator.Evaluate(scenarioTags) {
-				filteredChildren = append(filteredChildren, child)
+			// Expand outline first so Examples-level tags are on each expanded scenario
+			for _, expanded := range expandScenarioOutline(child.Scenario) {
+				scenarioTags := mergeTags(featureTags, extractTagNames(expanded.Tags))
+				if evaluator.Evaluate(scenarioTags) {
+					filteredChildren = append(filteredChildren, &messages.FeatureChild{Scenario: expanded})
+				}
 			}
 		} else if child.Rule != nil {
 			// Filter scenarios within the rule
@@ -642,10 +649,12 @@ func filterRuleByTags(rule *messages.Rule, featureTags []string, evaluator tagex
 			// Always include backgrounds
 			filteredChildren = append(filteredChildren, child)
 		} else if child.Scenario != nil {
-			// Check if scenario matches tags (inherit feature + rule tags)
-			scenarioTags := mergeTags(ruleTags, extractTagNames(child.Scenario.Tags))
-			if evaluator.Evaluate(scenarioTags) {
-				filteredChildren = append(filteredChildren, child)
+			// Expand outline first so Examples-level tags are on each expanded scenario
+			for _, expanded := range expandScenarioOutline(child.Scenario) {
+				scenarioTags := mergeTags(ruleTags, extractTagNames(expanded.Tags))
+				if evaluator.Evaluate(scenarioTags) {
+					filteredChildren = append(filteredChildren, &messages.RuleChild{Scenario: expanded})
+				}
 			}
 		}
 	}
@@ -815,26 +824,30 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 			if child.Background != nil {
 				featureBackground = child.Background
 			} else if child.Scenario != nil {
-				scenarios = append(scenarios, ScenarioExecution{
-					Scenario:          child.Scenario,
-					FeatureBackground: featureBackground,
-					FeatureFile:       docWithFile.file,
-					FeatureName:       featureName,
-				})
+				for _, expanded := range expandScenarioOutline(child.Scenario) {
+					scenarios = append(scenarios, ScenarioExecution{
+						Scenario:          expanded,
+						FeatureBackground: featureBackground,
+						FeatureFile:       docWithFile.file,
+						FeatureName:       featureName,
+					})
+				}
 			} else if child.Rule != nil {
 				var ruleBackground *messages.Background
 				for _, rc := range child.Rule.Children {
 					if rc.Background != nil {
 						ruleBackground = rc.Background
 					} else if rc.Scenario != nil {
-						scenarios = append(scenarios, ScenarioExecution{
-							Scenario:          rc.Scenario,
-							FeatureBackground: featureBackground,
-							RuleBackground:    ruleBackground,
-							FeatureFile:       docWithFile.file,
-							FeatureName:       featureName,
-							RuleName:          child.Rule.Name,
-						})
+						for _, expanded := range expandScenarioOutline(rc.Scenario) {
+							scenarios = append(scenarios, ScenarioExecution{
+								Scenario:          expanded,
+								FeatureBackground: featureBackground,
+								RuleBackground:    ruleBackground,
+								FeatureFile:       docWithFile.file,
+								FeatureName:       featureName,
+								RuleName:          child.Rule.Name,
+							})
+						}
 					}
 				}
 			}
@@ -1113,6 +1126,111 @@ func formatErrors(results []ScenarioResult) string {
 		}
 	}
 	return sb.String()
+}
+
+// expandScenarioOutline expands a Scenario Outline into concrete scenarios by
+// substituting <placeholder> values from each Examples row into step text and
+// DataTable cells.  Regular scenarios (no Examples) are returned as-is in a
+// single-element slice.
+func expandScenarioOutline(scenario *messages.Scenario) []*messages.Scenario {
+	if len(scenario.Examples) == 0 {
+		return []*messages.Scenario{scenario}
+	}
+
+	var expanded []*messages.Scenario
+
+	for _, examples := range scenario.Examples {
+		if examples.TableHeader == nil {
+			continue
+		}
+		// Column names from the header row
+		headers := make([]string, len(examples.TableHeader.Cells))
+		for i, cell := range examples.TableHeader.Cells {
+			headers[i] = cell.Value
+		}
+
+		for rowIdx, row := range examples.TableBody {
+			// Build placeholder → value map
+			replacements := make(map[string]string, len(headers))
+			for i, cell := range row.Cells {
+				if i < len(headers) {
+					replacements["<"+headers[i]+">"] = cell.Value
+				}
+			}
+
+			// Deep-copy steps with substitutions
+			newSteps := make([]*messages.Step, len(scenario.Steps))
+			for si, step := range scenario.Steps {
+				newStep := &messages.Step{
+					Location:    step.Location,
+					Keyword:     step.Keyword,
+					Text:        substituteText(step.Text, replacements),
+					Id:          step.Id,
+					KeywordType: step.KeywordType,
+					DocString:   step.DocString,
+				}
+				// Substitute inside DataTable cells too
+				if step.DataTable != nil {
+					newStep.DataTable = substituteDataTable(step.DataTable, replacements)
+				}
+				newSteps[si] = newStep
+			}
+
+			// Merge scenario tags + examples tags
+			mergedTags := make([]*messages.Tag, 0, len(scenario.Tags)+len(examples.Tags))
+			mergedTags = append(mergedTags, scenario.Tags...)
+			mergedTags = append(mergedTags, examples.Tags...)
+
+			// Build a descriptive name: "Outline Name -- <examplesName> #<row>"
+			name := scenario.Name
+			if examples.Name != "" {
+				name += " -- " + examples.Name
+			}
+			name += fmt.Sprintf(" (#%d)", rowIdx+1)
+
+			expanded = append(expanded, &messages.Scenario{
+				Location:    scenario.Location,
+				Tags:        mergedTags,
+				Keyword:     "Scenario",
+				Name:        name,
+				Description: scenario.Description,
+				Steps:       newSteps,
+				Id:          scenario.Id,
+			})
+		}
+	}
+	return expanded
+}
+
+// substituteText replaces all <placeholder> occurrences in text.
+func substituteText(text string, replacements map[string]string) string {
+	for placeholder, value := range replacements {
+		text = strings.ReplaceAll(text, placeholder, value)
+	}
+	return text
+}
+
+// substituteDataTable deep-copies a DataTable with placeholder substitution.
+func substituteDataTable(dt *messages.DataTable, replacements map[string]string) *messages.DataTable {
+	newRows := make([]*messages.TableRow, len(dt.Rows))
+	for ri, row := range dt.Rows {
+		newCells := make([]*messages.TableCell, len(row.Cells))
+		for ci, cell := range row.Cells {
+			newCells[ci] = &messages.TableCell{
+				Location: cell.Location,
+				Value:    substituteText(cell.Value, replacements),
+			}
+		}
+		newRows[ri] = &messages.TableRow{
+			Location: row.Location,
+			Cells:    newCells,
+			Id:       row.Id,
+		}
+	}
+	return &messages.DataTable{
+		Location: dt.Location,
+		Rows:     newRows,
+	}
 }
 
 // reportStepDataTable prints a step's DataTable via the reporter, if present.

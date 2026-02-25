@@ -9,15 +9,15 @@ import (
 
 // ANSI color codes
 const (
-	colorReset    = "\033[0m"
-	colorGreen    = "\033[32m"
-	colorRed      = "\033[31m"
-	colorYellow   = "\033[33m"
-	colorCyan     = "\033[36m"
-	colorGray     = "\033[90m"
-	colorBold     = "\033[1m"
-	colorStepText = "\033[38;2;187;181;41m"  // IntelliJ Cucumber yellow (#BBB529)
-	colorMatchGrp = "\033[38;2;104;151;187m" // IntelliJ Cucumber param blue (#6897BB)
+	colorReset = "\033[0m"
+	colorGreen = "\033[32m"
+	colorRed   = "\033[31m"
+
+	colorKeyword      = "\033[38;2;207;142;109m" // #CF8E6D — keywords (Feature:, Scenario:, Given, etc.)
+	colorText         = "\033[38;2;188;190;196m" // #BCBEC4 — step text, feature/scenario names
+	colorParam        = "\033[38;2;92;146;255m"  // #5C92FF — captured step parameters, table data cells
+	colorOutlineParam = "\033[38;2;199;125;187m" // #C77DBB — <placeholder> params, table header cells
+	colorYellow       = "\033[33m"               // skipped steps
 )
 
 // Symbols for step status
@@ -129,45 +129,93 @@ func (r *ConsoleReporter) color(c, s string) string {
 // FeatureStart prints the feature header
 func (r *ConsoleReporter) FeatureStart(name string) {
 	r.writeln("")
-	r.writeln(r.color(colorCyan, "Feature:") + " " + r.color(colorBold, name))
+	r.writeln(r.color(colorKeyword, "Feature:") + " " + r.color(colorText, name))
 }
 
 // RuleStart prints the rule header
 func (r *ConsoleReporter) RuleStart(name string) {
 	r.writeln("")
-	r.writeln("  " + r.color(colorCyan, "Rule:") + " " + r.color(colorBold, name))
+	r.writeln("  " + r.color(colorKeyword, "Rule:") + " " + r.color(colorText, name))
 }
 
 // BackgroundStart prints the background header
 func (r *ConsoleReporter) BackgroundStart() {
 	r.writeln("")
-	r.writeln("  " + r.color(colorCyan, "Background:"))
+	r.writeln("  " + r.color(colorKeyword, "Background:"))
 }
 
-// ScenarioStart prints the scenario header
+// ScenarioStart prints the scenario header.
+// Segments enclosed in angle brackets (e.g. <param>) are highlighted with
+// the outline-parameter color.
 func (r *ConsoleReporter) ScenarioStart(name string) {
 	r.writeln("")
-	r.writeln("  " + r.color(colorCyan, "Scenario:") + " " + r.color(colorBold, name))
+	r.writeln("  " + r.color(colorKeyword, "Scenario:") + " " + r.colorizeOutlineParams(name))
+}
+
+// colorizeOutlineParams applies the text color to the name while highlighting
+// <placeholder> segments with the outline-parameter color.
+func (r *ConsoleReporter) colorizeOutlineParams(name string) string {
+	if !r.useColors {
+		return name
+	}
+
+	var b strings.Builder
+	prev := 0
+	for {
+		start := strings.Index(name[prev:], "<")
+		if start < 0 {
+			break
+		}
+		start += prev
+		end := strings.Index(name[start:], ">")
+		if end < 0 {
+			break
+		}
+		end += start + 1 // include the '>'
+
+		// Text before the <param>
+		if start > prev {
+			b.WriteString(colorText)
+			b.WriteString(name[prev:start])
+			b.WriteString(colorReset)
+		}
+		// The <param> itself
+		b.WriteString(colorOutlineParam)
+		b.WriteString(name[start:end])
+		b.WriteString(colorReset)
+		prev = end
+	}
+	if prev == 0 {
+		// No angle brackets found — plain text color
+		return colorText + name + colorReset
+	}
+	// Remaining text after last <param>
+	if prev < len(name) {
+		b.WriteString(colorText)
+		b.WriteString(name[prev:])
+		b.WriteString(colorReset)
+	}
+	return b.String()
 }
 
 // formatStep formats a step with colored keyword and step text.
-// If matchLocs is provided, capture group regions are highlighted in a
-// distinct color (blue) while the rest of the text uses the step yellow.
+// If matchLocs is provided, capture group regions are highlighted with the
+// parameter color while the rest of the text uses the text color.
 // matchLocs contains pairs [start, end] of byte offsets into text for each
 // capture group (same layout as FindStringSubmatchIndex minus the full-match
 // pair).
 func (r *ConsoleReporter) formatStep(keyword, text string, matchLocs []int) string {
-	coloredKeyword := r.color(colorCyan, keyword)
+	coloredKeyword := r.color(colorKeyword, keyword)
 	coloredText := r.colorizeStepText(text, matchLocs)
 	return fmt.Sprintf("    %s%s", coloredKeyword, coloredText)
 }
 
-// colorizeStepText applies the step-text yellow to the entire text, but
-// overrides capture-group regions with the match-group blue when matchLocs
+// colorizeStepText applies the text color to the entire step text, but
+// overrides capture-group regions with the parameter color when matchLocs
 // is non-nil.
 func (r *ConsoleReporter) colorizeStepText(text string, matchLocs []int) string {
 	if !r.useColors || len(matchLocs) < 2 {
-		return r.color(colorStepText, text)
+		return r.color(colorText, text)
 	}
 
 	var b strings.Builder
@@ -177,22 +225,21 @@ func (r *ConsoleReporter) colorizeStepText(text string, matchLocs []int) string 
 		if start < 0 || end < 0 || start > len(text) || end > len(text) || start >= end {
 			continue
 		}
-		// Text before the capture group — step yellow
+		// Text before the capture group
 		if start > prev {
-			b.WriteString(colorStepText)
+			b.WriteString(colorText)
 			b.WriteString(text[prev:start])
 			b.WriteString(colorReset)
 		}
-		// Capture group — match blue + bold
-		b.WriteString(colorMatchGrp)
-		b.WriteString(colorBold)
+		// Capture group — parameter color
+		b.WriteString(colorParam)
 		b.WriteString(text[start:end])
 		b.WriteString(colorReset)
 		prev = end
 	}
 	// Remaining text after last capture group
 	if prev < len(text) {
-		b.WriteString(colorStepText)
+		b.WriteString(colorText)
 		b.WriteString(text[prev:])
 		b.WriteString(colorReset)
 	}
@@ -229,6 +276,9 @@ func (r *ConsoleReporter) StepSkipped(keyword, text string) {
 }
 
 // StepDataTable prints a DataTable below the step line with aligned columns.
+// The first row is treated as the header (cells colored with the outline-param
+// color) and subsequent rows use the step-param color. Pipe delimiters use the
+// keyword color.
 func (r *ConsoleReporter) StepDataTable(rows [][]string) {
 	if len(rows) == 0 {
 		return
@@ -244,19 +294,28 @@ func (r *ConsoleReporter) StepDataTable(rows [][]string) {
 		}
 	}
 
-	// Print each row with pipe-delimited, padded cells
-	for _, row := range rows {
+	// Print each row with individually colored pipes, header cells, and data cells
+	for rowIdx, row := range rows {
 		var b strings.Builder
-		b.WriteString("      | ")
+		b.WriteString("      ")
+		b.WriteString(r.color(colorKeyword, "|"))
+		b.WriteString(" ")
 		for i, cell := range row {
 			width := 0
 			if i < len(colWidths) {
 				width = colWidths[i]
 			}
-			b.WriteString(fmt.Sprintf("%-*s", width, cell))
-			b.WriteString(" | ")
+			padded := fmt.Sprintf("%-*s", width, cell)
+			if rowIdx == 0 {
+				b.WriteString(r.color(colorOutlineParam, padded))
+			} else {
+				b.WriteString(r.color(colorParam, padded))
+			}
+			b.WriteString(" ")
+			b.WriteString(r.color(colorKeyword, "|"))
+			b.WriteString(" ")
 		}
-		r.writeln(r.color(colorGray, b.String()))
+		r.writeln(b.String())
 	}
 }
 
