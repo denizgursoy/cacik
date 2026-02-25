@@ -2,143 +2,662 @@ package comment_parser
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 
+	messages "github.com/cucumber/messages/go/v21"
 	"github.com/denizgursoy/cacik/internal/generator"
+	"github.com/denizgursoy/cacik/pkg/gherkin_parser"
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	_ = &generator.Output{} // Ensure generator.Output is used
-)
+// ─── helpers ────────────────────────────────────────────────────────────────
 
-func TestGetComments(t *testing.T) {
-	t.Run("parses step definitions from testdata", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.Nil(t, err)
+// testdataDir returns the absolute path to internal/comment_parser/testdata.
+func testdataDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	return filepath.Join(dir, "testdata")
+}
 
-		parser := NewGoSourceFileParser()
-		recursively, err := parser.
-			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
+// parseDir parses a single testdata subdirectory and returns the Output.
+func parseDir(t *testing.T, dir string) *generator.Output {
+	t.Helper()
+	parser := NewGoSourceFileParser()
+	out, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), dir)
+	require.NoError(t, err)
+	return out
+}
 
-		require.Nil(t, err)
+// buildStepMap builds funcName→regexPattern from parsed output.
+func buildStepMap(out *generator.Output) map[string]string {
+	m := make(map[string]string)
+	for _, s := range out.StepFunctions {
+		m[s.FunctionName] = s.StepName
+	}
+	return m
+}
 
-		// Check that config function is found
-		require.Len(t, recursively.ConfigFunctions, 1)
-		require.Equal(t, "MyConfig", recursively.ConfigFunctions[0].FunctionName)
+// parseFeatureFile finds and parses the .feature file in dir.
+func parseFeatureFile(t *testing.T, dir string) *messages.GherkinDocument {
+	t.Helper()
+	files, err := gherkin_parser.SearchFeatureFilesIn([]string{dir})
+	require.NoError(t, err)
+	require.NotEmpty(t, files, "no .feature file found in %s", dir)
 
-		// Check that hooks function is found
-		require.Len(t, recursively.HooksFunctions, 1)
-		require.Equal(t, "MyHooks", recursively.HooksFunctions[0].FunctionName)
+	f, err := os.Open(files[0])
+	require.NoError(t, err)
+	defer f.Close()
 
-		// Check that step functions are found (order may vary)
-		stepMap := make(map[string]string)
-		for _, step := range recursively.StepFunctions {
-			stepMap[step.FunctionName] = step.StepName
+	doc, err := gherkin_parser.ParseGherkinFile(f)
+	require.NoError(t, err)
+	return doc
+}
+
+// collectStepTexts extracts every step text from a GherkinDocument,
+// walking Feature-level backgrounds, scenarios, and rules (with their backgrounds).
+func collectStepTexts(doc *messages.GherkinDocument) []string {
+	var texts []string
+	if doc.Feature == nil {
+		return texts
+	}
+	for _, child := range doc.Feature.Children {
+		if child.Background != nil {
+			for _, s := range child.Background.Steps {
+				texts = append(texts, s.Text)
+			}
 		}
+		if child.Scenario != nil {
+			for _, s := range child.Scenario.Steps {
+				texts = append(texts, s.Text)
+			}
+		}
+		if child.Rule != nil {
+			for _, rc := range child.Rule.Children {
+				if rc.Background != nil {
+					for _, s := range rc.Background.Steps {
+						texts = append(texts, s.Text)
+					}
+				}
+				if rc.Scenario != nil {
+					for _, s := range rc.Scenario.Steps {
+						texts = append(texts, s.Text)
+					}
+				}
+			}
+		}
+	}
+	return texts
+}
 
-		require.Equal(t, "^I have (\\d+) apples$", stepMap["IGetApples"])
+// compiledPatterns compiles every regex in stepMap and returns funcName→*regexp.Regexp.
+func compiledPatterns(t *testing.T, stepMap map[string]string) map[string]*regexp.Regexp {
+	t.Helper()
+	m := make(map[string]*regexp.Regexp, len(stepMap))
+	for fn, pat := range stepMap {
+		re, err := regexp.Compile(pat)
+		require.NoError(t, err, "failed to compile pattern for %s: %s", fn, pat)
+		m[fn] = re
+	}
+	return m
+}
 
-		// Bool step definitions - {bool} transforms to case-insensitive pattern
-		require.Equal(t, "^it is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["ItIs"])
-		require.Equal(t, "^the feature is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["FeatureToggle"])
+// matchStep finds the first pattern in compiled that matches stepText.
+// Returns funcName, the compiled regex, and the submatch slice.
+// Fails the test if no pattern matches.
+func matchStep(t *testing.T, stepText string, compiled map[string]*regexp.Regexp) (string, *regexp.Regexp, []string) {
+	t.Helper()
+	for fn, re := range compiled {
+		if m := re.FindStringSubmatch(stepText); m != nil {
+			return fn, re, m
+		}
+	}
+	t.Fatalf("no pattern matched step text: %q", stepText)
+	return "", nil, nil
+}
 
-		// Custom type step definitions - Color (string-based)
-		// {color} should be transformed to (blue|green|red) - sorted alphabetically
-		require.Contains(t, stepMap["SelectColor"], "blue")
-		require.Contains(t, stepMap["SelectColor"], "green")
-		require.Contains(t, stepMap["SelectColor"], "red")
+// assertAllStepsMatch verifies that every step text in the feature file
+// matches exactly one pattern and that every capture group is non-empty.
+func assertAllStepsMatch(t *testing.T, dir string) map[string][][]string {
+	t.Helper()
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+	compiled := compiledPatterns(t, stepMap)
+	doc := parseFeatureFile(t, dir)
+	texts := collectStepTexts(doc)
+	require.NotEmpty(t, texts, "feature file has no steps")
 
-		// Custom type step definitions - Priority (int-based)
-		// {priority} should include both names and values: high, low, medium, 1, 2, 3
-		require.Contains(t, stepMap["SetPriority"], "low")
-		require.Contains(t, stepMap["SetPriority"], "medium")
-		require.Contains(t, stepMap["SetPriority"], "high")
-		require.Contains(t, stepMap["SetPriority"], "1")
-		require.Contains(t, stepMap["SetPriority"], "2")
-		require.Contains(t, stepMap["SetPriority"], "3")
+	// funcName → list of captured-group slices (one per matched step)
+	captures := make(map[string][][]string)
+	for _, text := range texts {
+		fn, _, m := matchStep(t, text, compiled)
+		groups := m[1:] // strip full-match
+		captures[fn] = append(captures[fn], groups)
+	}
+	return captures
+}
 
-		// Built-in type step definitions
-		require.Equal(t, `^I have (-?\d+) apples$`, stepMap["HaveApples"])
-		require.Equal(t, `^the price is (-?\d*\.?\d+)$`, stepMap["PriceIs"])
-		require.Equal(t, `^my name is (\w+)$`, stepMap["NameIs"])
-		require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
-		require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+// ─── per-directory tests ────────────────────────────────────────────────────
 
-		// New built-in type step definitions
-		require.Equal(t, `^the identifier is ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`, stepMap["MatchUUID"])
-		require.Equal(t, `^the server is at ([0-9a-fA-F.:]+(?:%25[a-zA-Z0-9]+)?)$`, stepMap["MatchIP"])
-		require.Equal(t, `^the color code is (0[xX][0-9a-fA-F]+)$`, stepMap["MatchHex"])
-		require.Equal(t, `^the file is at ([./~\\][^\s]*)$`, stepMap["MatchPath"])
-		require.Equal(t, `^the version is (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$`, stepMap["MatchSemver"])
-		require.Equal(t, `^the encoded data is ([A-Za-z0-9+/]{4,}={0,2})$`, stepMap["MatchBase64"])
-		require.Equal(t, `^the items are ([^,\s]+(?:,[^,\s]+)+)$`, stepMap["MatchCSV"])
-		require.Equal(t, `^the payload is (\{[^}]*\}|\[[^\]]*\])$`, stepMap["MatchJSON"])
-		require.Equal(t, `^the contact number is (\+?[\d\s().-]{7,20})$`, stepMap["MatchPhone"])
-		require.Equal(t, `^the discount is (-?\d*\.?\d+%)$`, stepMap["MatchPercent"])
-		require.Equal(t, `^the large number is (-?\d+)$`, stepMap["MatchBigint"])
-		require.Equal(t, `^the pattern is (/[^/]+/)$`, stepMap["MatchRegex"])
+func TestStepInt(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-int")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
 
-		// Mixed type step definitions - verify they contain expected patterns
-		// WantColoredVehicle: {color} (car|bike) {int} {float}
-		require.Contains(t, stepMap["WantColoredVehicle"], "(car|bike)")
-		require.Contains(t, stepMap["WantColoredVehicle"], "(?i:")          // case-insensitive color
-		require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d+)`)       // int
-		require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d*\.?\d+)`) // float
+	require.Equal(t, `^I have (\d+) apples$`, stepMap["IGetApples"])
 
-		// NamedItemWithPriority: {color} {string} {priority}
-		require.Contains(t, stepMap["NamedItemWithPriority"], "(?i:")
-		require.Contains(t, stepMap["NamedItemWithPriority"], `"([^"]*)"`) // string
+	caps := assertAllStepsMatch(t, dir)
+	// "I have 5 apples" → ["5"], "I have 10 apples" → ["10"], etc.
+	require.Contains(t, caps["IGetApples"], []string{"5"})
+	require.Contains(t, caps["IGetApples"], []string{"10"})
+	require.Contains(t, caps["IGetApples"], []string{"100"})
+	require.Contains(t, caps["IGetApples"], []string{"1000000"})
+}
 
-		// SizedItemCount: {int} {size} {color}
-		require.Contains(t, stepMap["SizedItemCount"], `(-?\d+)`)
-		require.Contains(t, stepMap["SizedItemCount"], "(?i:") // size and color are case-insensitive
+func TestStepBool(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-bool")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, "^it is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["ItIs"])
+	require.Equal(t, "^the feature is (?i)(true|false|yes|no|on|off|enabled|disabled|1|0|t|f)$", stepMap["FeatureToggle"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["ItIs"], []string{"true"})
+	require.Contains(t, caps["ItIs"], []string{"false"})
+	require.Contains(t, caps["ItIs"], []string{"yes"})
+	require.Contains(t, caps["ItIs"], []string{"no"})
+	require.Contains(t, caps["ItIs"], []string{"on"})
+	require.Contains(t, caps["ItIs"], []string{"off"})
+	require.Contains(t, caps["ItIs"], []string{"enabled"})
+	require.Contains(t, caps["ItIs"], []string{"disabled"})
+	// Case-insensitive
+	require.Contains(t, caps["ItIs"], []string{"TRUE"})
+	require.Contains(t, caps["ItIs"], []string{"FALSE"})
+	require.Contains(t, caps["ItIs"], []string{"Yes"})
+	require.Contains(t, caps["ItIs"], []string{"NO"})
+	require.Contains(t, caps["FeatureToggle"], []string{"enabled"})
+	require.Contains(t, caps["FeatureToggle"], []string{"disabled"})
+}
+
+func TestStepBuiltin(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-builtin")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^I have (-?\d+) apples$`, stepMap["HaveApples"])
+	require.Equal(t, `^the price is (-?\d*\.?\d+)$`, stepMap["PriceIs"])
+	require.Equal(t, `^my name is (\w+)$`, stepMap["NameIs"])
+	require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
+	require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["HaveApples"], []string{"5"})
+	require.Contains(t, caps["HaveApples"], []string{"-3"})
+	require.Contains(t, caps["PriceIs"], []string{"19.99"})
+	require.Contains(t, caps["PriceIs"], []string{"-0.5"})
+	require.Contains(t, caps["PriceIs"], []string{"100"})
+	require.Contains(t, caps["NameIs"], []string{"John"})
+	require.Contains(t, caps["NameIs"], []string{"test123"})
+	require.Contains(t, caps["Say"], []string{"Hello World"})
+	require.Contains(t, caps["Say"], []string{"Testing with spaces and punctuation!"})
+	require.Contains(t, caps["SeeAnything"], []string{"anything at all here"})
+	require.Contains(t, caps["SeeAnything"], []string{"123 mixed content!"})
+}
+
+func TestStepFloat(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-float")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the item costs (-?\d*\.?\d+) dollars$`, stepMap["ItemCosts"])
+	require.Equal(t, `^the temperature is (-?\d*\.?\d+) degrees$`, stepMap["TemperatureIs"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["ItemCosts"], []string{"19.99"})
+	require.Contains(t, caps["ItemCosts"], []string{"100.00"})
+	require.Contains(t, caps["ItemCosts"], []string{"50"})
+	require.Contains(t, caps["TemperatureIs"], []string{"-5.5"})
+	require.Contains(t, caps["TemperatureIs"], []string{"-0.1"})
+	require.Contains(t, caps["TemperatureIs"], []string{"0"})
+}
+
+func TestStepString(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-string")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the user says "([^"]*)"$`, stepMap["UserSays"])
+	require.Equal(t, `^the error message is "([^"]*)"$`, stepMap["ErrorMessageIs"])
+	require.Equal(t, `^the title is (\w+)$`, stepMap["TitleIs"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["UserSays"], []string{"Hello World"})
+	require.Contains(t, caps["UserSays"], []string{"Testing 123!"})
+	require.Contains(t, caps["UserSays"], []string{"Special chars: @#$%"})
+	require.Contains(t, caps["UserSays"], []string{""})
+	require.Contains(t, caps["ErrorMessageIs"], []string{"File not found"})
+	require.Contains(t, caps["ErrorMessageIs"], []string{"Connection timeout"})
+	require.Contains(t, caps["TitleIs"], []string{"Hello"})
+	require.Contains(t, caps["TitleIs"], []string{"Test123"})
+}
+
+func TestStepColor(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-color")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	// Custom type patterns contain the color values case-insensitively
+	require.Contains(t, stepMap["SelectColor"], "blue")
+	require.Contains(t, stepMap["SelectColor"], "green")
+	require.Contains(t, stepMap["SelectColor"], "red")
+
+	// Custom type parsing
+	colorType, ok := out.CustomTypes["color"]
+	require.True(t, ok, "Color type should be found")
+	require.Equal(t, "Color", colorType.Name)
+	require.Equal(t, "string", colorType.Underlying)
+	require.Equal(t, "red", colorType.Values["Red"])
+	require.Equal(t, "blue", colorType.Values["Blue"])
+	require.Equal(t, "green", colorType.Values["Green"])
+
+	caps := assertAllStepsMatch(t, dir)
+	// Verify captured values
+	require.NotEmpty(t, caps["SelectColor"])
+	require.NotEmpty(t, caps["ColorIs"])
+	// "I select red" → captures "red"
+	for _, groups := range caps["SelectColor"] {
+		require.Len(t, groups, 1)
+		require.Contains(t, []string{"red", "blue", "green", "RED"}, groups[0])
+	}
+}
+
+func TestStepPriority(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-priority")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	// Custom type patterns include both names and values
+	require.Contains(t, stepMap["SetPriority"], "low")
+	require.Contains(t, stepMap["SetPriority"], "medium")
+	require.Contains(t, stepMap["SetPriority"], "high")
+	require.Contains(t, stepMap["SetPriority"], "1")
+	require.Contains(t, stepMap["SetPriority"], "2")
+	require.Contains(t, stepMap["SetPriority"], "3")
+
+	// Custom type parsing
+	priorityType, ok := out.CustomTypes["priority"]
+	require.True(t, ok, "Priority type should be found")
+	require.Equal(t, "Priority", priorityType.Name)
+	require.Equal(t, "int", priorityType.Underlying)
+	require.Equal(t, "1", priorityType.Values["Low"])
+	require.Equal(t, "2", priorityType.Values["Medium"])
+	require.Equal(t, "3", priorityType.Values["High"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.NotEmpty(t, caps["SetPriority"])
+	require.NotEmpty(t, caps["PriorityIs"])
+}
+
+func TestStepTable(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-table")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the following users:$`, stepMap["TheFollowingUsers"])
+	require.Equal(t, `^there should be (-?\d+) users$`, stepMap["ThereShouldBeNUsers"])
+	require.Equal(t, `^I have (-?\d+) items:$`, stepMap["IHaveItems"])
+	require.Equal(t, `^the coordinates are:$`, stepMap["Coordinates"])
+
+	// Table steps end with ":" — step text still matches pattern
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["ThereShouldBeNUsers"], []string{"2"})
+	require.Contains(t, caps["IHaveItems"], []string{"3"})
+}
+
+func TestStepRule(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-rule")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the system is initialized$`, stepMap["SystemInitialized"])
+	require.Equal(t, `^the registration form is loaded$`, stepMap["RegistrationFormLoaded"])
+	require.Equal(t, `^the login page is loaded$`, stepMap["LoginPageLoaded"])
+	require.Equal(t, `^the user registers with "([^"]*)"$`, stepMap["UserRegisters"])
+	require.Equal(t, `^the registration should succeed$`, stepMap["RegistrationSucceed"])
+	require.Equal(t, `^the registration should fail$`, stepMap["RegistrationFail"])
+	require.Equal(t, `^the user logs in with "([^"]*)" and "([^"]*)"$`, stepMap["UserLogsIn"])
+	require.Equal(t, `^the login should succeed$`, stepMap["LoginSucceed"])
+	require.Equal(t, `^the login should fail$`, stepMap["LoginFail"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["UserRegisters"], []string{"alice@example.com"})
+	require.Contains(t, caps["UserRegisters"], []string{"not-an-email"})
+	require.Contains(t, caps["UserLogsIn"], []string{"alice", "secret"})
+	require.Contains(t, caps["UserLogsIn"], []string{"alice", "wrong"})
+}
+
+func TestStepDatetime(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-datetime")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	// Verify patterns contain expected substrings
+	require.Contains(t, stepMap["MeetingAt"], `\d{1,2}:\d{2}`)
+	require.Contains(t, stepMap["EventOn"], `\d{4}[-/]\d{2}[-/]\d{2}`)
+	require.Contains(t, stepMap["AppointmentAt"], `\d{4}[-/]\d{2}[-/]\d{2}`)
+	require.Contains(t, stepMap["AppointmentAt"], `\d{1,2}:\d{2}`)
+	require.Contains(t, stepMap["ConvertToTimezone"], "Z")
+	require.Contains(t, stepMap["ConvertToTimezone"], "UTC")
+
+	// All steps must match a pattern
+	caps := assertAllStepsMatch(t, dir)
+
+	// Spot-check some captured values
+	require.Contains(t, caps["MeetingAt"], []string{"14:30"})
+	require.Contains(t, caps["MeetingAt"], []string{"09:15"})
+	require.Contains(t, caps["MeetingAt"], []string{"14:30:45"})
+	require.Contains(t, caps["EventOn"], []string{"2024-01-15"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"UTC"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"Europe/London"})
+}
+
+func TestStepMixed(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-mixed")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	// Verify patterns contain expected fragments
+	require.Contains(t, stepMap["WantColoredVehicle"], "(car|bike)")
+	require.Contains(t, stepMap["WantColoredVehicle"], "(?i:")
+	require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d+)`)
+	require.Contains(t, stepMap["WantColoredVehicle"], `(-?\d*\.?\d+)`)
+	require.Contains(t, stepMap["NamedItemWithPriority"], "(?i:")
+	require.Contains(t, stepMap["NamedItemWithPriority"], `"([^"]*)"`)
+	require.Contains(t, stepMap["SizedItemCount"], `(-?\d+)`)
+	require.Contains(t, stepMap["SizedItemCount"], "(?i:")
+
+	// Custom types parsed
+	require.Contains(t, out.CustomTypes, "color")
+	require.Contains(t, out.CustomTypes, "priority")
+	require.Contains(t, out.CustomTypes, "size")
+
+	// All steps match
+	caps := assertAllStepsMatch(t, dir)
+
+	// "I want a red car with 4 doors costing 25000.50 dollars"
+	// → captures: [red, car, 4, 25000.50]
+	require.Contains(t, caps["WantColoredVehicle"], []string{"red", "car", "4", "25000.50"})
+	require.Contains(t, caps["WantColoredVehicle"], []string{"Green", "car", "2", "15000"})
+
+	// "I ordered 3 of red apples and some oranges"
+	require.Contains(t, caps["QuantityWithAny"], []string{"3", "red apples and some oranges"})
+	require.Contains(t, caps["QuantityWithAny"], []string{"100", "random stuff here"})
+
+	// "I have 5 small red boxes"
+	require.Contains(t, caps["SizedItemCount"], []string{"5", "small", "red"})
+}
+
+// ─── new built-in type tests ────────────────────────────────────────────────
+
+func TestStepUUID(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-uuid")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t,
+		`^the identifier is ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`,
+		stepMap["MatchUUID"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchUUID"], []string{"550e8400-e29b-41d4-a716-446655440000"})
+	require.Contains(t, caps["MatchUUID"], []string{"6BA7B810-9DAD-11D1-80B4-00C04FD430C8"})
+}
+
+func TestStepIP(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-ip")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t,
+		`^the server is at ([0-9a-fA-F.:]+(?:%25[a-zA-Z0-9]+)?)$`,
+		stepMap["MatchIP"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchIP"], []string{"192.168.1.1"})
+	require.Contains(t, caps["MatchIP"], []string{"::1"})
+	require.Contains(t, caps["MatchIP"], []string{"2001:db8::1"})
+}
+
+func TestStepHex(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-hex")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the color code is (0[xX][0-9a-fA-F]+)$`, stepMap["MatchHex"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchHex"], []string{"0xFF"})
+	require.Contains(t, caps["MatchHex"], []string{"0x1A2B"})
+	require.Contains(t, caps["MatchHex"], []string{"0XDEADBEEF"})
+}
+
+func TestStepPath(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-path")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the file is at ([./~\\][^\s]*)$`, stepMap["MatchPath"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchPath"], []string{"/usr/local/bin"})
+	require.Contains(t, caps["MatchPath"], []string{"./config.yaml"})
+	require.Contains(t, caps["MatchPath"], []string{"../parent/file.txt"})
+}
+
+func TestStepSemver(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-semver")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t,
+		`^the version is (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$`,
+		stepMap["MatchSemver"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchSemver"], []string{"1.0.0"})
+	require.Contains(t, caps["MatchSemver"], []string{"2.1.3-beta"})
+	require.Contains(t, caps["MatchSemver"], []string{"1.0.0-alpha.1+build.123"})
+}
+
+func TestStepBase64(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-base64")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the encoded data is ([A-Za-z0-9+/]{4,}={0,2})$`, stepMap["MatchBase64"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchBase64"], []string{"SGVsbG8="})
+	require.Contains(t, caps["MatchBase64"], []string{"SGVsbG8gV29ybGQ="})
+	require.Contains(t, caps["MatchBase64"], []string{"dGVzdA=="})
+}
+
+func TestStepCSV(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-csv")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the items are ([^,\s]+(?:,[^,\s]+)+)$`, stepMap["MatchCSV"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchCSV"], []string{"a,b,c"})
+	require.Contains(t, caps["MatchCSV"], []string{"1,2,3"})
+	require.Contains(t, caps["MatchCSV"], []string{"foo,bar,baz"})
+}
+
+func TestStepJSON(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-json")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the payload is (\{[^}]*\}|\[[^\]]*\])$`, stepMap["MatchJSON"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchJSON"], []string{`{"key":"value"}`})
+	require.Contains(t, caps["MatchJSON"], []string{"[1,2,3]"})
+}
+
+func TestStepPhone(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-phone")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the contact number is (\+?[\d\s().-]{7,20})$`, stepMap["MatchPhone"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchPhone"], []string{"+1-555-123-4567"})
+	require.Contains(t, caps["MatchPhone"], []string{"+44 20 7946 0958"})
+	require.Contains(t, caps["MatchPhone"], []string{"555-123-4567"})
+}
+
+func TestStepPercent(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-percent")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the discount is (-?\d*\.?\d+%)$`, stepMap["MatchPercent"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchPercent"], []string{"50%"})
+	require.Contains(t, caps["MatchPercent"], []string{"99.9%"})
+	require.Contains(t, caps["MatchPercent"], []string{"-10%"})
+}
+
+func TestStepBigint(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-bigint")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the large number is (-?\d+)$`, stepMap["MatchBigint"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchBigint"], []string{"12345678901234567890"})
+	require.Contains(t, caps["MatchBigint"], []string{"-99999999999999999999"})
+}
+
+func TestStepRegex(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-regex")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^the pattern is (/[^/]+/)$`, stepMap["MatchRegex"])
+
+	caps := assertAllStepsMatch(t, dir)
+	require.Contains(t, caps["MatchRegex"], []string{`/^hello.*$/`})
+	require.Contains(t, caps["MatchRegex"], []string{`/\d+/`})
+	require.Contains(t, caps["MatchRegex"], []string{"/[a-z]+/"})
+}
+
+// ─── root testdata (config + hooks) ─────────────────────────────────────────
+
+func TestStepConfig(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-config")
+	out := parseDir(t, dir)
+
+	require.Len(t, out.ConfigFunctions, 1)
+	require.Equal(t, "MyConfig", out.ConfigFunctions[0].FunctionName)
+	require.Len(t, out.HooksFunctions, 1)
+	require.Equal(t, "MyHooks", out.HooksFunctions[0].FunctionName)
+
+	// No step functions expected in this directory
+	require.Empty(t, out.StepFunctions)
+}
+
+// ─── duplicate detection ────────────────────────────────────────────────────
+
+func TestDuplicateStepDetection(t *testing.T) {
+	t.Run("returns error for duplicate step patterns", func(t *testing.T) {
+		dir := filepath.Join(testdataDir(t), "step-duplicate")
+
+		parser := NewGoSourceFileParser()
+		_, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(
+			context.Background(), dir,
+		)
+
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "duplicate step pattern")
+		require.Contains(t, err.Error(), "I have")
+		require.Contains(t, err.Error(), "items")
+		require.Contains(t, err.Error(), "FirstDuplicateStep")
+		require.Contains(t, err.Error(), "SecondDuplicateStep")
 	})
 }
 
-func TestCustomTypeParsing(t *testing.T) {
-	t.Run("parses Color custom type", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.Nil(t, err)
+// ─── discovery test ─────────────────────────────────────────────────────────
 
-		parser := NewGoSourceFileParser()
-		output, err := parser.
-			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
+// TestAllDirectoriesHaveTests verifies that every step-* directory under
+// testdata has a corresponding test. If someone adds a new step-* directory
+// but forgets to add a test, this will catch it.
+func TestAllDirectoriesHaveTests(t *testing.T) {
+	base := testdataDir(t)
+	entries, err := os.ReadDir(base)
+	require.NoError(t, err)
 
-		require.Nil(t, err)
+	// Known step-* directories and their test functions
+	testedDirs := map[string]string{
+		"step-int":       "TestStepInt",
+		"step-bool":      "TestStepBool",
+		"step-builtin":   "TestStepBuiltin",
+		"step-float":     "TestStepFloat",
+		"step-string":    "TestStepString",
+		"step-color":     "TestStepColor",
+		"step-priority":  "TestStepPriority",
+		"step-table":     "TestStepTable",
+		"step-rule":      "TestStepRule",
+		"step-datetime":  "TestStepDatetime",
+		"step-mixed":     "TestStepMixed",
+		"step-uuid":      "TestStepUUID",
+		"step-ip":        "TestStepIP",
+		"step-hex":       "TestStepHex",
+		"step-path":      "TestStepPath",
+		"step-semver":    "TestStepSemver",
+		"step-base64":    "TestStepBase64",
+		"step-csv":       "TestStepCSV",
+		"step-json":      "TestStepJSON",
+		"step-phone":     "TestStepPhone",
+		"step-percent":   "TestStepPercent",
+		"step-bigint":    "TestStepBigint",
+		"step-regex":     "TestStepRegex",
+		"step-duplicate": "TestDuplicateStepDetection",
+		"step-config":    "TestStepConfig",
+	}
 
-		// Check Color custom type
-		colorType, ok := output.CustomTypes["color"]
-		require.True(t, ok, "Color type should be found")
-		require.Equal(t, "Color", colorType.Name)
-		require.Equal(t, "string", colorType.Underlying)
-		require.Equal(t, "red", colorType.Values["Red"])
-		require.Equal(t, "blue", colorType.Values["Blue"])
-		require.Equal(t, "green", colorType.Values["Green"])
-	})
+	var missing []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "step-") {
+			continue
+		}
+		if _, ok := testedDirs[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
 
-	t.Run("parses Priority custom type", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.Nil(t, err)
-
-		parser := NewGoSourceFileParser()
-		output, err := parser.
-			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), filepath.Join(dir, "testdata"))
-
-		require.Nil(t, err)
-
-		// Check Priority custom type
-		priorityType, ok := output.CustomTypes["priority"]
-		require.True(t, ok, "Priority type should be found")
-		require.Equal(t, "Priority", priorityType.Name)
-		require.Equal(t, "int", priorityType.Underlying)
-		require.Equal(t, "1", priorityType.Values["Low"])
-		require.Equal(t, "2", priorityType.Values["Medium"])
-		require.Equal(t, "3", priorityType.Values["High"])
-	})
+	if len(missing) > 0 {
+		t.Errorf("step-* directories without tests: %s\nAdd a test function for each and register it in testedDirs.", strings.Join(missing, ", "))
+	}
 }
+
+// ─── unit tests (kept as-is) ────────────────────────────────────────────────
 
 func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {color} to regex", func(t *testing.T) {
@@ -394,22 +913,6 @@ func TestTransformStepPattern(t *testing.T) {
 	})
 }
 
-func TestDuplicateStepDetection(t *testing.T) {
-	t.Run("returns error for duplicate step patterns", func(t *testing.T) {
-		dir, err := os.Getwd()
-		require.Nil(t, err)
+// ─── unused import guard ────────────────────────────────────────────────────
 
-		parser := NewGoSourceFileParser()
-		_, err = parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(
-			context.Background(),
-			filepath.Join(dir, "testdata-duplicate"),
-		)
-
-		require.NotNil(t, err)
-		require.Contains(t, err.Error(), "duplicate step pattern")
-		require.Contains(t, err.Error(), "I have")
-		require.Contains(t, err.Error(), "items")
-		require.Contains(t, err.Error(), "FirstDuplicateStep")
-		require.Contains(t, err.Error(), "SecondDuplicateStep")
-	})
-}
+var _ = fmt.Sprintf // ensure fmt is used

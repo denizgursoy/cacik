@@ -1,4 +1,4 @@
-package testdata
+package step_config
 
 import "github.com/denizgursoy/cacik/pkg/cacik"
 
