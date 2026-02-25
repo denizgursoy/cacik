@@ -59,6 +59,18 @@ Cacik supports Cucumber-style parameter placeholders:
 | `{email}` | `string` | Email address | `user@example.com`, `name+tag@domain.org` |
 | `{duration}` | `time.Duration` | Go duration | `5s`, `1h30m`, `500ms` |
 | `{url}` | `*url.URL` | HTTP/HTTPS URL | `https://example.com/path?q=1` |
+| `{uuid}` | `string` | UUID (v1-v5) | `550e8400-e29b-41d4-a716-446655440000` |
+| `{ip}` | `net.IP` | IPv4 or IPv6 address | `192.168.1.1`, `::1` |
+| `{hex}` | `int64` | Hex integer (0x prefix) | `0xFF`, `0x1A2B` |
+| `{path}` | `string` | File/directory path | `./config.yaml`, `~/docs/file.txt` |
+| `{semver}` | `string` | Semantic version | `1.0.0`, `2.1.3-beta+build.123` |
+| `{base64}` | `[]byte` | Base64-encoded data | `SGVsbG8=`, `dGVzdA==` |
+| `{csv}` | `[]string` | Comma-separated values | `a,b,c`, `1,2,3` |
+| `{json}` | `string` | JSON object or array | `{"key":"value"}`, `[1,2,3]` |
+| `{phone}` | `string` | Phone number | `+1-555-123-4567`, `555-123-4567` |
+| `{percent}` | `float64` | Percentage (divided by 100) | `50%`, `99.9%`, `-10%` |
+| `{bigint}` | `*big.Int` | Arbitrary-precision integer | `12345678901234567890` |
+| `{regex}` | `*regexp.Regexp` | Regular expression | `/^\d+$/`, `/[a-z]+/` |
 
 Example:
 
@@ -122,6 +134,66 @@ func NavigateTo(ctx *cacik.Context, u *url.URL) {
 func FeatureEnabled(ctx *cacik.Context, enabled bool) {
     ctx.Logger().Info("feature state", "enabled", enabled)
 }
+
+// @cacik `^resource {uuid}$`
+func Resource(ctx *cacik.Context, id string) {
+    ctx.Logger().Info("resource", "uuid", id)
+}
+
+// @cacik `^connect to {ip}$`
+func ConnectTo(ctx *cacik.Context, ip net.IP) {
+    ctx.Logger().Info("connecting", "ip", ip.String())
+}
+
+// @cacik `^color code is {hex}$`
+func ColorCode(ctx *cacik.Context, val int64) {
+    ctx.Logger().Info("color", "hex", val)
+}
+
+// @cacik `^file at {path}$`
+func FileAt(ctx *cacik.Context, p string) {
+    ctx.Logger().Info("file", "path", p)
+}
+
+// @cacik `^version {semver}$`
+func Version(ctx *cacik.Context, ver string) {
+    ctx.Logger().Info("version", "semver", ver)
+}
+
+// @cacik `^payload {base64}$`
+func Payload(ctx *cacik.Context, data []byte) {
+    ctx.Logger().Info("payload", "size", len(data))
+}
+
+// @cacik `^tags {csv}$`
+func Tags(ctx *cacik.Context, tags []string) {
+    ctx.Logger().Info("tags", "values", tags)
+}
+
+// @cacik `^data {json}$`
+func Data(ctx *cacik.Context, j string) {
+    ctx.Logger().Info("json data", "raw", j)
+}
+
+// @cacik `^call {phone}$`
+func Call(ctx *cacik.Context, phone string) {
+    ctx.Logger().Info("calling", "phone", phone)
+}
+
+// @cacik `^discount {percent}$`
+func Discount(ctx *cacik.Context, rate float64) {
+    ctx.Logger().Info("discount", "rate", rate) // 50% → 0.5
+}
+
+// @cacik `^balance {bigint}$`
+func Balance(ctx *cacik.Context, bi *big.Int) {
+    ctx.Logger().Info("balance", "value", bi.String())
+}
+
+// @cacik `^match pattern {regex}$`
+func MatchPattern(ctx *cacik.Context, re *regexp.Regexp) {
+    ctx.Logger().Info("pattern", "regex", re.String())
+}
 ```
 
 Feature file:
@@ -142,6 +214,18 @@ Feature: Built-in types
     And wait for 5s
     And navigate to https://example.com/api
     And the feature is true
+    And resource 550e8400-e29b-41d4-a716-446655440000
+    And connect to 192.168.1.1
+    And color code is 0xFF
+    And file at ./config.yaml
+    And version 2.1.3-beta
+    And payload SGVsbG8=
+    And tags smoke,fast,critical
+    And data {"key":"value"}
+    And call +1-555-123-4567
+    And discount 50%
+    And balance 12345678901234567890
+    And match pattern /^\d+$/
 ```
 
 ### Time, Date, DateTime, and Timezone Formats
@@ -204,12 +288,17 @@ Parses to Go's `*time.Location`.
 ### Supported Go Parameter Types
 
 - `string` - text values
-- `int`, `int8`, `int16`, `int32`, `int64` - integer values
-- `uint`, `uint8`, `uint16`, `uint32`, `uint64` - unsigned integers
-- `float32`, `float64` - floating point values
+- `int`, `int8`, `int16`, `int32`, `int64` - integer values (supports hex `0x` prefix)
+- `uint`, `uint8`, `uint16`, `uint32`, `uint64` - unsigned integers (supports hex `0x` prefix)
+- `float32`, `float64` - floating point values (also handles `%` suffix for percent)
 - `bool` - boolean values (see below)
 - `time.Time` - for `{time}`, `{date}`, `{datetime}` types
 - `*time.Location` - for `{timezone}` type
+- `net.IP` - for `{ip}` type
+- `[]byte` - for `{base64}` type (base64-decoded)
+- `[]string` - for `{csv}` type (comma-split)
+- `*big.Int` - for `{bigint}` type (arbitrary-precision integer)
+- `*regexp.Regexp` - for `{regex}` type (compiled regular expression)
 - `*cacik.Context` - automatically passed (should be first parameter)
 
 ### Using Regex Directly

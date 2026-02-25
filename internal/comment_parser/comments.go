@@ -367,6 +367,54 @@ var builtInTypes = map[string]string{
 	// URL format: HTTP/HTTPS URLs
 	// Examples: http://example.com, https://sub.domain.org/path?query=value#fragment
 	"url": `(https?://[^\s]+)`,
+
+	// UUID format: 8-4-4-4-12 hex digits (case-insensitive)
+	// Examples: 550e8400-e29b-41d4-a716-446655440000, 6BA7B810-9DAD-11D1-80B4-00C04FD430C8
+	"uuid": `([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`,
+
+	// IP address: IPv4 dotted decimal or IPv6 (including ::1, full form, mixed)
+	// Examples: 192.168.1.1, 10.0.0.1, ::1, 2001:db8::1, fe80::1%25eth0
+	"ip": `([0-9a-fA-F.:]+(?:%25[a-zA-Z0-9]+)?)`,
+
+	// Hex format: 0x or 0X prefix followed by hex digits
+	// Examples: 0xFF, 0x1A2B, 0X00, 0xDEADBEEF
+	"hex": `(0[xX][0-9a-fA-F]+)`,
+
+	// Path format: Unix or Windows file path
+	// Examples: /usr/local/bin, ./config.yaml, ../parent/file.txt, C:\Users\name
+	"path": `([./~\\][^\s]*)`,
+
+	// Semver format: MAJOR.MINOR.PATCH with optional pre-release and build metadata
+	// Examples: 1.0.0, 2.1.3-beta, 1.0.0-alpha.1+build.123
+	"semver": `(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)`,
+
+	// Base64 format: standard base64 encoded string (at least 4 chars, padded with =)
+	// Examples: SGVsbG8=, SGVsbG8gV29ybGQ=, dGVzdA==
+	"base64": `([A-Za-z0-9+/]{4,}={0,2})`,
+
+	// CSV format: comma-separated values (no spaces after comma)
+	// Examples: a,b,c, 1,2,3, foo,bar,baz
+	"csv": `([^,\s]+(?:,[^,\s]+)+)`,
+
+	// JSON format: JSON object or array (greedy match of braces/brackets)
+	// Examples: {"key":"value"}, [1,2,3], {"nested":{"a":1}}
+	"json": `(\{[^}]*\}|\[[^\]]*\])`,
+
+	// Phone format: international phone number with optional + prefix
+	// Examples: +1-555-123-4567, +44 20 7946 0958, 555-123-4567, +1 (555) 123-4567
+	"phone": `(\+?[\d\s().-]{7,20})`,
+
+	// Percent format: number followed by % sign
+	// Examples: 50%, 99.9%, -10%, 0.5%
+	"percent": `(-?\d*\.?\d+%)`,
+
+	// Bigint format: large integer (positive or negative, no size limit)
+	// Examples: 12345678901234567890, -99999999999999999999
+	"bigint": `(-?\d+)`,
+
+	// Regex format: slash-delimited regular expression
+	// Examples: /^hello.*$/, /\d+/, /[a-z]+/
+	"regex": `(/[^/]+/)`,
 }
 
 // transformStepPattern replaces {typename} placeholders with regex patterns

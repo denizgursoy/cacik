@@ -1,8 +1,12 @@
 package executor
 
 import (
+	"encoding/base64"
 	"fmt"
+	"math/big"
+	"net"
 	"net/url"
+	"regexp"
 	"testing"
 	"time"
 
@@ -2016,6 +2020,587 @@ func TestStepExecutor_DataTableInjection(t *testing.T) {
 		require.Equal(t, "Alice", capturedA)
 		require.Equal(t, "apples", capturedB)
 		require.Equal(t, 2, capturedTable.Len())
+	})
+}
+
+// =============================================================================
+// New Built-in Parameter Type Tests
+// =============================================================================
+
+func TestStepExecutor_UUIDType(t *testing.T) {
+	uuidPattern := `([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`
+
+	t.Run("parses lowercase UUID", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedUUID string
+
+		err := exec.RegisterStep("^resource "+uuidPattern+"$", func(ctx *cacik.Context, id string) {
+			capturedUUID = id
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("resource 550e8400-e29b-41d4-a716-446655440000")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "550e8400-e29b-41d4-a716-446655440000", capturedUUID)
+	})
+
+	t.Run("parses uppercase UUID", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedUUID string
+
+		err := exec.RegisterStep("^resource "+uuidPattern+"$", func(ctx *cacik.Context, id string) {
+			capturedUUID = id
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("resource 6BA7B810-9DAD-11D1-80B4-00C04FD430C8")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "6BA7B810-9DAD-11D1-80B4-00C04FD430C8", capturedUUID)
+	})
+}
+
+func TestStepExecutor_IPType(t *testing.T) {
+	ipPattern := `([0-9a-fA-F.:]+(?:%25[a-zA-Z0-9]+)?)`
+
+	t.Run("parses IPv4 address", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedIP net.IP
+
+		err := exec.RegisterStep("^connect to "+ipPattern+"$", func(ctx *cacik.Context, ip net.IP) {
+			capturedIP = ip
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("connect to 192.168.1.1")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "192.168.1.1", capturedIP.String())
+	})
+
+	t.Run("parses IPv4 loopback", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedIP net.IP
+
+		err := exec.RegisterStep("^connect to "+ipPattern+"$", func(ctx *cacik.Context, ip net.IP) {
+			capturedIP = ip
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("connect to 127.0.0.1")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "127.0.0.1", capturedIP.String())
+	})
+
+	t.Run("parses IPv6 loopback", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedIP net.IP
+
+		err := exec.RegisterStep("^connect to "+ipPattern+"$", func(ctx *cacik.Context, ip net.IP) {
+			capturedIP = ip
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("connect to ::1")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "::1", capturedIP.String())
+	})
+
+	t.Run("returns error for invalid IP", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		err := exec.RegisterStep("^connect to (.+)$", func(ctx *cacik.Context, ip net.IP) {
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("connect to not-an-ip")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot parse")
+	})
+}
+
+func TestStepExecutor_HexType(t *testing.T) {
+	hexPattern := `(0[xX][0-9a-fA-F]+)`
+
+	t.Run("parses hex value to int64", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal int64
+
+		err := exec.RegisterStep("^color code is "+hexPattern+"$", func(ctx *cacik.Context, val int64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("color code is 0xFF")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, int64(255), capturedVal)
+	})
+
+	t.Run("parses hex with uppercase X", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal int64
+
+		err := exec.RegisterStep("^color code is "+hexPattern+"$", func(ctx *cacik.Context, val int64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("color code is 0X1A2B")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, int64(0x1A2B), capturedVal)
+	})
+
+	t.Run("parses hex to int", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal int
+
+		err := exec.RegisterStep("^color code is "+hexPattern+"$", func(ctx *cacik.Context, val int) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("color code is 0xDEAD")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 0xDEAD, capturedVal)
+	})
+}
+
+func TestStepExecutor_PathType(t *testing.T) {
+	pathPattern := `([./~\\][^\s]*)`
+
+	t.Run("parses absolute Unix path", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedPath string
+
+		err := exec.RegisterStep("^file at "+pathPattern+"$", func(ctx *cacik.Context, p string) {
+			capturedPath = p
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("file at ./config.yaml")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "./config.yaml", capturedPath)
+	})
+
+	t.Run("parses relative path", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedPath string
+
+		err := exec.RegisterStep("^file at "+pathPattern+"$", func(ctx *cacik.Context, p string) {
+			capturedPath = p
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("file at ../parent/file.txt")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "../parent/file.txt", capturedPath)
+	})
+
+	t.Run("parses home-relative path", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedPath string
+
+		err := exec.RegisterStep("^file at "+pathPattern+"$", func(ctx *cacik.Context, p string) {
+			capturedPath = p
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("file at ~/documents/readme.md")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "~/documents/readme.md", capturedPath)
+	})
+}
+
+func TestStepExecutor_SemverType(t *testing.T) {
+	semverPattern := `(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)`
+
+	t.Run("parses simple semver", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVer string
+
+		err := exec.RegisterStep("^version "+semverPattern+"$", func(ctx *cacik.Context, ver string) {
+			capturedVer = ver
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("version 1.0.0")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "1.0.0", capturedVer)
+	})
+
+	t.Run("parses semver with pre-release", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVer string
+
+		err := exec.RegisterStep("^version "+semverPattern+"$", func(ctx *cacik.Context, ver string) {
+			capturedVer = ver
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("version 2.1.3-beta")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "2.1.3-beta", capturedVer)
+	})
+
+	t.Run("parses semver with pre-release and build metadata", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVer string
+
+		err := exec.RegisterStep("^version "+semverPattern+"$", func(ctx *cacik.Context, ver string) {
+			capturedVer = ver
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("version 1.0.0-alpha.1+build.123")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "1.0.0-alpha.1+build.123", capturedVer)
+	})
+}
+
+func TestStepExecutor_Base64Type(t *testing.T) {
+	base64Pattern := `([A-Za-z0-9+/]{4,}={0,2})`
+
+	t.Run("parses base64 to []byte", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBytes []byte
+
+		encoded := base64.StdEncoding.EncodeToString([]byte("Hello"))
+		err := exec.RegisterStep("^payload "+base64Pattern+"$", func(ctx *cacik.Context, data []byte) {
+			capturedBytes = data
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("payload " + encoded)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []byte("Hello"), capturedBytes)
+	})
+
+	t.Run("parses base64 with padding", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBytes []byte
+
+		encoded := base64.StdEncoding.EncodeToString([]byte("Hello World"))
+		err := exec.RegisterStep("^payload "+base64Pattern+"$", func(ctx *cacik.Context, data []byte) {
+			capturedBytes = data
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("payload " + encoded)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []byte("Hello World"), capturedBytes)
+	})
+
+	t.Run("parses base64 without padding", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBytes []byte
+
+		// "test" encodes to "dGVzdA==" — 4-char base64 with padding
+		encoded := base64.StdEncoding.EncodeToString([]byte("test"))
+		err := exec.RegisterStep("^payload "+base64Pattern+"$", func(ctx *cacik.Context, data []byte) {
+			capturedBytes = data
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("payload " + encoded)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []byte("test"), capturedBytes)
+	})
+}
+
+func TestStepExecutor_CSVType(t *testing.T) {
+	csvPattern := `([^,\s]+(?:,[^,\s]+)+)`
+
+	t.Run("parses CSV to []string", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedValues []string
+
+		err := exec.RegisterStep("^tags "+csvPattern+"$", func(ctx *cacik.Context, values []string) {
+			capturedValues = values
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("tags foo,bar,baz")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"foo", "bar", "baz"}, capturedValues)
+	})
+
+	t.Run("parses numeric CSV", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedValues []string
+
+		err := exec.RegisterStep("^ids "+csvPattern+"$", func(ctx *cacik.Context, values []string) {
+			capturedValues = values
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("ids 1,2,3")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"1", "2", "3"}, capturedValues)
+	})
+
+	t.Run("parses two-element CSV", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedValues []string
+
+		err := exec.RegisterStep("^pair "+csvPattern+"$", func(ctx *cacik.Context, values []string) {
+			capturedValues = values
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("pair key,value")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, []string{"key", "value"}, capturedValues)
+	})
+}
+
+func TestStepExecutor_JSONType(t *testing.T) {
+	jsonPattern := `(\{[^}]*\}|\[[^\]]*\])`
+
+	t.Run("parses JSON object as string", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedJSON string
+
+		err := exec.RegisterStep("^data "+jsonPattern+"$", func(ctx *cacik.Context, j string) {
+			capturedJSON = j
+		})
+		require.NoError(t, err)
+
+		doc := createDocument(`data {"key":"value"}`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, `{"key":"value"}`, capturedJSON)
+	})
+
+	t.Run("parses JSON array as string", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedJSON string
+
+		err := exec.RegisterStep("^data "+jsonPattern+"$", func(ctx *cacik.Context, j string) {
+			capturedJSON = j
+		})
+		require.NoError(t, err)
+
+		doc := createDocument(`data [1,2,3]`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, `[1,2,3]`, capturedJSON)
+	})
+}
+
+func TestStepExecutor_PhoneType(t *testing.T) {
+	phonePattern := `(\+?[\d\s().-]{7,20})`
+
+	t.Run("parses international phone number", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedPhone string
+
+		err := exec.RegisterStep("^call "+phonePattern+"$", func(ctx *cacik.Context, phone string) {
+			capturedPhone = phone
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("call +1-555-123-4567")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "+1-555-123-4567", capturedPhone)
+	})
+
+	t.Run("parses phone without country code", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedPhone string
+
+		err := exec.RegisterStep("^call "+phonePattern+"$", func(ctx *cacik.Context, phone string) {
+			capturedPhone = phone
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("call 555-123-4567")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, "555-123-4567", capturedPhone)
+	})
+}
+
+func TestStepExecutor_PercentType(t *testing.T) {
+	percentPattern := `(-?\d*\.?\d+%)`
+
+	t.Run("parses integer percent", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal float64
+
+		err := exec.RegisterStep("^discount "+percentPattern+"$", func(ctx *cacik.Context, val float64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("discount 50%")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.InDelta(t, 0.50, capturedVal, 0.0001)
+	})
+
+	t.Run("parses decimal percent", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal float64
+
+		err := exec.RegisterStep("^discount "+percentPattern+"$", func(ctx *cacik.Context, val float64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("discount 99.9%")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.InDelta(t, 0.999, capturedVal, 0.0001)
+	})
+
+	t.Run("parses negative percent", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal float64
+
+		err := exec.RegisterStep("^change "+percentPattern+"$", func(ctx *cacik.Context, val float64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("change -10%")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.InDelta(t, -0.10, capturedVal, 0.0001)
+	})
+
+	t.Run("parses 100%", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedVal float64
+
+		err := exec.RegisterStep("^discount "+percentPattern+"$", func(ctx *cacik.Context, val float64) {
+			capturedVal = val
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("discount 100%")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.InDelta(t, 1.0, capturedVal, 0.0001)
+	})
+}
+
+func TestStepExecutor_BigintType(t *testing.T) {
+	bigintPattern := `(-?\d+)`
+
+	t.Run("parses large positive integer", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBigInt *big.Int
+
+		err := exec.RegisterStep("^balance "+bigintPattern+"$", func(ctx *cacik.Context, bi *big.Int) {
+			capturedBigInt = bi
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("balance 12345678901234567890")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		expected, _ := new(big.Int).SetString("12345678901234567890", 10)
+		require.Equal(t, 0, capturedBigInt.Cmp(expected))
+	})
+
+	t.Run("parses negative big integer", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBigInt *big.Int
+
+		err := exec.RegisterStep("^balance "+bigintPattern+"$", func(ctx *cacik.Context, bi *big.Int) {
+			capturedBigInt = bi
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("balance -99999999999999999999")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		expected, _ := new(big.Int).SetString("-99999999999999999999", 10)
+		require.Equal(t, 0, capturedBigInt.Cmp(expected))
+	})
+
+	t.Run("parses zero", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedBigInt *big.Int
+
+		err := exec.RegisterStep("^balance "+bigintPattern+"$", func(ctx *cacik.Context, bi *big.Int) {
+			capturedBigInt = bi
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("balance 0")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.Equal(t, 0, capturedBigInt.Cmp(big.NewInt(0)))
+	})
+}
+
+func TestStepExecutor_RegexType(t *testing.T) {
+	regexPattern := `(/[^/]+/)`
+
+	t.Run("parses slash-delimited regex", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedRegex *regexp.Regexp
+
+		err := exec.RegisterStep("^match pattern "+regexPattern+"$", func(ctx *cacik.Context, re *regexp.Regexp) {
+			capturedRegex = re
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("match pattern /^hello.*$/")
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.True(t, capturedRegex.MatchString("hello world"))
+		require.False(t, capturedRegex.MatchString("world hello"))
+	})
+
+	t.Run("parses digit regex", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var capturedRegex *regexp.Regexp
+
+		err := exec.RegisterStep("^match pattern "+regexPattern+"$", func(ctx *cacik.Context, re *regexp.Regexp) {
+			capturedRegex = re
+		})
+		require.NoError(t, err)
+
+		doc := createDocument(`match pattern /\d+/`)
+		err = exec.Execute(doc)
+		require.NoError(t, err)
+		require.True(t, capturedRegex.MatchString("123"))
+		require.False(t, capturedRegex.MatchString("abc"))
+	})
+
+	t.Run("returns error for invalid regex", func(t *testing.T) {
+		exec := NewStepExecutor()
+
+		err := exec.RegisterStep("^match pattern (.+)$", func(ctx *cacik.Context, re *regexp.Regexp) {
+		})
+		require.NoError(t, err)
+
+		doc := createDocument("match pattern /[invalid/")
+		err = exec.Execute(doc)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot parse")
 	})
 }
 

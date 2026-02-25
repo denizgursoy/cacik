@@ -1,7 +1,10 @@
 package executor
 
 import (
+	"encoding/base64"
 	"fmt"
+	"math/big"
+	"net"
 	"net/url"
 	"reflect"
 	"regexp"
@@ -477,6 +480,53 @@ func (e *StepExecutor) convertArg(arg string, targetType reflect.Type) (reflect.
 		return reflect.ValueOf(u), nil
 	}
 
+	// Check for net.IP
+	if targetType == reflect.TypeOf(net.IP{}) {
+		ip := net.ParseIP(arg)
+		if ip == nil {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as net.IP", arg)
+		}
+		return reflect.ValueOf(ip), nil
+	}
+
+	// Check for []byte (base64-encoded)
+	if targetType == reflect.TypeOf([]byte{}) {
+		decoded, err := base64.StdEncoding.DecodeString(arg)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as base64 []byte: %w", arg, err)
+		}
+		return reflect.ValueOf(decoded), nil
+	}
+
+	// Check for []string (CSV)
+	if targetType == reflect.TypeOf([]string{}) {
+		parts := strings.Split(arg, ",")
+		return reflect.ValueOf(parts), nil
+	}
+
+	// Check for *big.Int
+	if targetType == reflect.TypeOf((*big.Int)(nil)) {
+		bi := new(big.Int)
+		if _, ok := bi.SetString(arg, 10); !ok {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as *big.Int", arg)
+		}
+		return reflect.ValueOf(bi), nil
+	}
+
+	// Check for *regexp.Regexp
+	if targetType == reflect.TypeOf((*regexp.Regexp)(nil)) {
+		// Strip surrounding slashes if present: /pattern/ → pattern
+		pattern := arg
+		if len(pattern) >= 2 && pattern[0] == '/' && pattern[len(pattern)-1] == '/' {
+			pattern = pattern[1 : len(pattern)-1]
+		}
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			return reflect.Value{}, fmt.Errorf("cannot parse %q as *regexp.Regexp: %w", arg, err)
+		}
+		return reflect.ValueOf(re), nil
+	}
+
 	// Check if this is a custom type (named type that differs from its kind)
 	if typeName != "" && typeName != kindName {
 		return e.convertCustomType(arg, targetType, typeName)
@@ -556,70 +606,70 @@ func convertPrimitive(arg string, targetType reflect.Type) (reflect.Value, error
 		return reflect.ValueOf(arg), nil
 
 	case reflect.Int:
-		v, err := strconv.Atoi(arg)
+		v, err := strconv.ParseInt(arg, 0, 0)
 		if err != nil {
 			return reflect.Value{}, err
 		}
-		return reflect.ValueOf(v), nil
+		return reflect.ValueOf(int(v)), nil
 
 	case reflect.Int8:
-		v, err := strconv.ParseInt(arg, 10, 8)
+		v, err := strconv.ParseInt(arg, 0, 8)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(int8(v)), nil
 
 	case reflect.Int16:
-		v, err := strconv.ParseInt(arg, 10, 16)
+		v, err := strconv.ParseInt(arg, 0, 16)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(int16(v)), nil
 
 	case reflect.Int32:
-		v, err := strconv.ParseInt(arg, 10, 32)
+		v, err := strconv.ParseInt(arg, 0, 32)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(int32(v)), nil
 
 	case reflect.Int64:
-		v, err := strconv.ParseInt(arg, 10, 64)
+		v, err := strconv.ParseInt(arg, 0, 64)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(v), nil
 
 	case reflect.Uint:
-		v, err := strconv.ParseUint(arg, 10, 0)
+		v, err := strconv.ParseUint(arg, 0, 0)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(uint(v)), nil
 
 	case reflect.Uint8:
-		v, err := strconv.ParseUint(arg, 10, 8)
+		v, err := strconv.ParseUint(arg, 0, 8)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(uint8(v)), nil
 
 	case reflect.Uint16:
-		v, err := strconv.ParseUint(arg, 10, 16)
+		v, err := strconv.ParseUint(arg, 0, 16)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(uint16(v)), nil
 
 	case reflect.Uint32:
-		v, err := strconv.ParseUint(arg, 10, 32)
+		v, err := strconv.ParseUint(arg, 0, 32)
 		if err != nil {
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(uint32(v)), nil
 
 	case reflect.Uint64:
-		v, err := strconv.ParseUint(arg, 10, 64)
+		v, err := strconv.ParseUint(arg, 0, 64)
 		if err != nil {
 			return reflect.Value{}, err
 		}
@@ -628,6 +678,13 @@ func convertPrimitive(arg string, targetType reflect.Type) (reflect.Value, error
 	case reflect.Float32:
 		v, err := strconv.ParseFloat(arg, 32)
 		if err != nil {
+			// Try stripping trailing % for percent values
+			if strings.HasSuffix(arg, "%") {
+				pv, perr := strconv.ParseFloat(strings.TrimSuffix(arg, "%"), 32)
+				if perr == nil {
+					return reflect.ValueOf(float32(pv / 100)), nil
+				}
+			}
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(float32(v)), nil
@@ -635,6 +692,13 @@ func convertPrimitive(arg string, targetType reflect.Type) (reflect.Value, error
 	case reflect.Float64:
 		v, err := strconv.ParseFloat(arg, 64)
 		if err != nil {
+			// Try stripping trailing % for percent values
+			if strings.HasSuffix(arg, "%") {
+				pv, perr := strconv.ParseFloat(strings.TrimSuffix(arg, "%"), 64)
+				if perr == nil {
+					return reflect.ValueOf(pv / 100), nil
+				}
+			}
 			return reflect.Value{}, err
 		}
 		return reflect.ValueOf(v), nil

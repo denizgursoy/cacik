@@ -67,6 +67,20 @@ func TestGetComments(t *testing.T) {
 		require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
 		require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
 
+		// New built-in type step definitions
+		require.Equal(t, `^the identifier is ([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$`, stepMap["MatchUUID"])
+		require.Equal(t, `^the server is at ([0-9a-fA-F.:]+(?:%25[a-zA-Z0-9]+)?)$`, stepMap["MatchIP"])
+		require.Equal(t, `^the color code is (0[xX][0-9a-fA-F]+)$`, stepMap["MatchHex"])
+		require.Equal(t, `^the file is at ([./~\\][^\s]*)$`, stepMap["MatchPath"])
+		require.Equal(t, `^the version is (\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$`, stepMap["MatchSemver"])
+		require.Equal(t, `^the encoded data is ([A-Za-z0-9+/]{4,}={0,2})$`, stepMap["MatchBase64"])
+		require.Equal(t, `^the items are ([^,\s]+(?:,[^,\s]+)+)$`, stepMap["MatchCSV"])
+		require.Equal(t, `^the payload is (\{[^}]*\}|\[[^\]]*\])$`, stepMap["MatchJSON"])
+		require.Equal(t, `^the contact number is (\+?[\d\s().-]{7,20})$`, stepMap["MatchPhone"])
+		require.Equal(t, `^the discount is (-?\d*\.?\d+%)$`, stepMap["MatchPercent"])
+		require.Equal(t, `^the large number is (-?\d+)$`, stepMap["MatchBigint"])
+		require.Equal(t, `^the pattern is (/[^/]+/)$`, stepMap["MatchRegex"])
+
 		// Mixed type step definitions - verify they contain expected patterns
 		// WantColoredVehicle: {color} (car|bike) {int} {float}
 		require.Contains(t, stepMap["WantColoredVehicle"], "(car|bike)")
