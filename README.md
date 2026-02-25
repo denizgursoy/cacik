@@ -634,8 +634,7 @@ import (
 )
 
 func TestCacik(t *testing.T) {
-	err := runner.NewCucumberRunner().
-		WithTestingT(t).
+	err := runner.NewCucumberRunner(t).
 		RegisterStep("^I have (\\d+) apples$", IHaveApples).
 		Run()
 
@@ -659,32 +658,34 @@ Each scenario runs as a Go subtest via `t.Run()`, so you get standard `go test` 
 
 ## Parallel Execution
 
-Run scenarios in parallel using the `--parallel` flag:
+All scenarios run as parallel subtests via `t.Parallel()`. Concurrency is controlled by Go's built-in `-parallel` flag (defaults to `GOMAXPROCS`).
 
 ```shell
-# Run with 4 workers
-go test -v -- --parallel 4
+# Default: all scenarios run in parallel (limited by GOMAXPROCS)
+go test -v ./...
 
-# Alternative syntax
-go test -v -- --parallel=8
+# Limit to 4 concurrent scenarios
+go test -v -parallel 4 ./...
+
+# Run sequentially (one scenario at a time)
+go test -v -parallel 1 ./...
 
 # Combine with tags
-go test -v -- --tags "@smoke" --parallel 4
+go test -v -parallel 4 -- --tags "@smoke"
 ```
 
-**Note:** Use `--` to separate `go test` flags from cacik flags.
+**Note:** `-parallel` is a native `go test` flag — no `--` separator needed for it. Use `--` only to separate cacik-specific flags like `--tags`.
 
 ### How It Works
 
-- When using `WithTestingT(t)`, each scenario runs as a `t.Run()` subtest
-- Parallel scenarios use `t.Parallel()` inside their subtests, leveraging Go's native test parallelism
+- Each scenario runs as a `t.Run()` subtest that calls `t.Parallel()`
+- Go's test runner controls how many parallel subtests execute concurrently
 - Each scenario runs in complete isolation with its own `*cacik.Context`
 - Background steps are re-executed for each scenario
-- Default: 1 (sequential execution)
 
 ### Context Isolation
 
-When running in parallel, each scenario gets its own isolated context:
+Each scenario gets its own isolated context:
 
 ```go
 // @cacik `^I set value to {int}$`
@@ -699,7 +700,7 @@ func CheckValue(ctx *cacik.Context, expected int) {
 }
 ```
 
-Each parallel scenario has its own `Data()` store, so there's no risk of race conditions or data leakage between scenarios.
+Each scenario has its own `Data()` store, so there's no risk of race conditions or data leakage between scenarios.
 
 ## Running with Tags
 
@@ -794,7 +795,6 @@ import "github.com/denizgursoy/cacik/pkg/cacik"
 // MyConfig returns runtime configuration
 func MyConfig() *cacik.Config {
 	return &cacik.Config{
-		Parallel:        4,            // Number of parallel workers (0 = sequential)
 		FailFast:        true,         // Stop on first failure
 		NoColor:         false,        // Colored output (default: true)
 		DisableLog:      false,        // Logger (ctx.Logger()) enabled (default: false)
@@ -808,7 +808,6 @@ func MyConfig() *cacik.Config {
 
 | Field | Type | Description | CLI Override |
 |-------|------|-------------|--------------|
-| `Parallel` | `int` | Number of parallel workers (0 = sequential) | `--parallel N` |
 | `FailFast` | `bool` | Stop execution on first failure | `--fail-fast` |
 | `NoColor` | `bool` | Disable colored output | `--no-color` |
 | `DisableLog` | `bool` | Disable the structured logger (`ctx.Logger()`) | `--disable-log` |

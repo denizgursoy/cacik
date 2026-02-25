@@ -46,22 +46,22 @@ import (
 	b "b"
 	cacik "github.com/denizgursoy/cacik/pkg/cacik"
 	runner "github.com/denizgursoy/cacik/pkg/runner"
-	"log"
 	package1 "package1"
 	package2 "package2"
+	"testing"
 )
 
-func main() {
+func TestCacik(t *testing.T) {
 	config := cacik.MergeConfigs(a.ConfigFunction())
 	hooks := []*cacik.Hooks{b.HooksFunction()}
-	err := runner.NewCucumberRunner().
+	err := runner.NewCucumberRunner(t).
 		WithConfig(config).
 		WithHooks(hooks...).
 		RegisterStep("^step 1$", package1.Step1Function).
 		RegisterStep("^step 2$", package2.Step2Function).
 		Run()
 	if err != nil {
-		log.Fatal(err)
+		t.Fatal(err)
 	}
 }
 `
@@ -78,7 +78,7 @@ func TestOutput_Generate(t *testing.T) {
 }
 
 func TestOutput_Generate_TestMode(t *testing.T) {
-	t.Run("should generate test file with TestCacik and WithTestingT", func(t *testing.T) {
+	t.Run("should generate test file with TestCacik and NewCucumberRunner(t)", func(t *testing.T) {
 		testData := Output{
 			PackageName:        "myapp",
 			CurrentPackagePath: "github.com/example/myapp",
@@ -127,8 +127,9 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 		require.Contains(t, output, "t.Fatal(err)")
 		require.NotContains(t, output, "log.Fatal(err)")
 
-		// Should include WithTestingT(t) in the runner chain
-		require.Contains(t, output, "WithTestingT(t)")
+		// Should pass t to NewCucumberRunner constructor
+		require.Contains(t, output, "NewCucumberRunner(t)")
+		require.NotContains(t, output, "WithTestingT")
 	})
 
 	t.Run("should call same-package functions without import qualifier", func(t *testing.T) {

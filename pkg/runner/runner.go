@@ -4,10 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
@@ -30,22 +27,26 @@ type (
 	}
 )
 
-// NewCucumberRunner creates a new runner with an internal step executor
-func NewCucumberRunner() *CucumberRunner {
+// NewCucumberRunner creates a new runner with an internal step executor.
+// The *testing.T is required — each scenario runs as a Go subtest via t.Run().
+func NewCucumberRunner(t *testing.T) *CucumberRunner {
 	return &CucumberRunner{
 		executor: executor.NewStepExecutor(),
+		t:        t,
 	}
 }
 
-// NewCucumberRunnerWithExecutor creates a runner with a custom executor (for testing)
-func NewCucumberRunnerWithExecutor(exec *executor.StepExecutor) *CucumberRunner {
+// NewCucumberRunnerWithExecutor creates a runner with a custom executor (for testing).
+// The *testing.T is required — each scenario runs as a Go subtest via t.Run().
+func NewCucumberRunnerWithExecutor(t *testing.T, exec *executor.StepExecutor) *CucumberRunner {
 	return &CucumberRunner{
 		executor: exec,
+		t:        t,
 	}
 }
 
 // WithConfig sets the configuration for the runner.
-// CLI flags (--parallel, --fail-fast, --no-color) override config values.
+// CLI flags (--fail-fast, --no-color) override config values.
 func (c *CucumberRunner) WithConfig(config *cacik.Config) *CucumberRunner {
 	c.config = config
 	return c
@@ -87,17 +88,10 @@ func (c *CucumberRunner) WithLogger(logger cacik.Logger) *CucumberRunner {
 	return c
 }
 
-// WithTestingT sets the *testing.T for the runner.
-// When set, each scenario runs as a subtest via t.Run() and assertion
-// failures use t.Fatalf() instead of panicking.
-func (c *CucumberRunner) WithTestingT(t *testing.T) *CucumberRunner {
-	c.t = t
-	return c
-}
-
 // Run executes all feature files, optionally filtering by tag expression from CLI args.
-// Tag expression is passed via --tags flag, e.g.: go run . --tags "@smoke and @fast"
-// Parallel execution is enabled via --parallel flag, e.g.: go run . --parallel 4
+// Tag expression is passed via --tags flag, e.g.: go test -v -- --tags "@smoke and @fast"
+// All scenarios run as parallel subtests via t.Parallel(). Control concurrency with
+// go test -parallel N (defaults to GOMAXPROCS).
 // Supports Cucumber tag expression syntax: and, or, not, parentheses
 // Examples:
 //   - @smoke
@@ -111,7 +105,7 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Apply config with CLI overrides
-	workers, failFast, useColors, disableLog, disableReporter := c.resolveSettings()
+	failFast, useColors, disableLog, disableReporter := c.resolveSettings()
 
 	// Apply logger from config
 	if c.config != nil && c.config.Logger != nil {
@@ -172,93 +166,18 @@ func (c *CucumberRunner) Run() error {
 		docs = append(docs, &documentWithFile{document: document, file: file})
 	}
 
-	// If *testing.T is set, use t.Run() subtests
-	if c.t != nil {
-		return c.runWithTestingT(docs, workers, failFast, useColors, disableReporter, c.hookExecutor)
-	}
-
-	// If parallel execution is requested
-	if workers > 1 {
-		// Collect all scenarios from filtered documents
-		scenarios := c.collectScenarios(docs)
-		if len(scenarios) == 0 {
-			return nil
-		}
-
-		// Create main reporter for summary aggregation
-		var mainReporter *cacik.ConsoleReporter
-		if disableReporter {
-			mainReporter = cacik.NewNoopConsoleReporter()
-		} else {
-			mainReporter = cacik.NewConsoleReporter(useColors)
-		}
-
-		// Execute in parallel with buffered reporters
-		results := c.executeParallelWithReporter(scenarios, workers, useColors, mainReporter, failFast, disableReporter)
-
-		// Print summary
-		mainReporter.PrintSummary()
-
-		// Collect errors
-		var failedResults []ScenarioResult
-		for _, r := range results {
-			if r.Error != nil {
-				failedResults = append(failedResults, r)
-			}
-		}
-
-		if len(failedResults) > 0 {
-			return fmt.Errorf("%d scenario(s) failed:\n%s", len(failedResults), formatErrors(failedResults))
-		}
-		return nil
-	}
-
-	// Sequential execution (original behavior)
-	// Create reporter
-	var reporter *cacik.ConsoleReporter
-	if disableReporter {
-		reporter = cacik.NewNoopConsoleReporter()
-	} else {
-		reporter = cacik.NewConsoleReporter(useColors)
-	}
-
-	// Set up cacik context with logger and reporter
-	opts := make([]cacik.Option, 0)
-	if c.logger != nil {
-		opts = append(opts, cacik.WithLogger(c.logger))
-	}
-	opts = append(opts, cacik.WithReporter(reporter))
-	ctx := cacik.New(opts...)
-	c.executor.SetCacikContext(ctx)
-
-	// Store hook executor in runner for step hooks
-	c.executor.SetHookExecutor(c.hookExecutor)
-
-	// Execute documents with reporter lifecycle calls
-	var runErr error
-	for _, docWithFile := range docs {
-		if err := c.executeDocumentWithReporter(docWithFile.document, reporter, failFast); err != nil {
-			runErr = fmt.Errorf("execution failed for %s: %w", docWithFile.file, err)
-			break
-		}
-	}
-
-	// Print summary
-	reporter.PrintSummary()
-
-	return runErr
+	return c.runWithTestingT(docs, failFast, useColors, disableReporter, c.hookExecutor)
 }
 
 // runWithTestingT executes scenarios using t.Run() subtests.
-// Each scenario becomes a Go subtest, and parallel scenarios use t.Parallel().
-func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, failFast bool, useColors bool, disableReporter bool, hookExecutor *cacik.HookExecutor) error {
+// Each scenario becomes a Go subtest and calls t.Parallel() so Go's test runner
+// controls concurrency (via go test -parallel N).
+func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool, useColors bool, disableReporter bool, hookExecutor *cacik.HookExecutor) error {
 	// Collect all scenarios from filtered documents
 	scenarios := c.collectScenarios(docs)
 	if len(scenarios) == 0 {
 		return nil
 	}
-
-	parallel := workers > 1
 
 	// Create main reporter for summary aggregation
 	var mainReporter *cacik.ConsoleReporter
@@ -268,53 +187,30 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 		mainReporter = cacik.NewConsoleReporter(useColors)
 	}
 
-	lastFeature := ""
-	lastRule := ""
 	for _, scenario := range scenarios {
 		scenario := scenario // capture loop variable
 		testName := scenario.FeatureName + "/" + scenario.Scenario.Name
-
 		c.t.Run(testName, func(st *testing.T) {
-			if parallel {
-				st.Parallel()
-			}
+			st.Parallel()
 
-			// For parallel: use buffered reporter per subtest to avoid interleaved output.
-			// For sequential: use the main reporter directly (prints immediately).
+			// Use buffered reporter per subtest to avoid interleaved output.
 			var reporter *cacik.ConsoleReporter
 			if disableReporter {
 				reporter = cacik.NewNoopConsoleReporter()
-			} else if parallel {
+			} else {
 				reporter = cacik.NewBufferedReporter(useColors)
 				defer func() {
 					reporter.Flush()
 					mainReporter.MergeSummary(reporter)
 				}()
-			} else {
-				reporter = mainReporter
 			}
 
-			// Print feature header.
-			// In parallel mode each subtest has its own buffered reporter, so
-			// always print. In sequential mode only print when the feature changes.
-			if parallel {
-				reporter.FeatureStart(scenario.FeatureName)
-			} else if scenario.FeatureName != lastFeature {
-				reporter.FeatureStart(scenario.FeatureName)
-				lastFeature = scenario.FeatureName
-				lastRule = "" // reset rule tracking when feature changes
-			}
+			// Always print feature header (each subtest has its own buffered reporter)
+			reporter.FeatureStart(scenario.FeatureName)
 
 			// Print rule header when the scenario belongs to a rule.
 			if scenario.RuleName != "" {
-				if parallel {
-					reporter.RuleStart(scenario.RuleName)
-				} else if scenario.RuleName != lastRule {
-					reporter.RuleStart(scenario.RuleName)
-					lastRule = scenario.RuleName
-				}
-			} else if !parallel {
-				lastRule = "" // reset when moving out of a rule
+				reporter.RuleStart(scenario.RuleName)
 			}
 
 			// Create fresh context for this scenario with the subtest's *testing.T
@@ -432,162 +328,11 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, workers int, 
 	return nil
 }
 
-// executeDocumentWithReporter executes a document with reporter lifecycle calls
-func (c *CucumberRunner) executeDocumentWithReporter(document *messages.GherkinDocument, reporter *cacik.ConsoleReporter, failFast bool) error {
-	if document == nil || document.Feature == nil {
-		return nil
-	}
-
-	feature := document.Feature
-	reporter.FeatureStart(feature.Name)
-
-	var featureBackground *messages.Background
-
-	for _, child := range feature.Children {
-		if child.Background != nil {
-			featureBackground = child.Background
-		} else if child.Rule != nil {
-			if err := c.executeRuleWithReporter(child.Rule, featureBackground, reporter, failFast); err != nil {
-				return err
-			}
-		} else if child.Scenario != nil {
-			for _, expanded := range expandScenarioOutline(child.Scenario) {
-				if err := c.executeScenarioWithReporter(expanded, featureBackground, nil, reporter, failFast); err != nil {
-					return err
-				}
-			}
-		}
-	}
-
-	return nil
-}
-
-// executeRuleWithReporter executes a rule with reporter lifecycle calls
-func (c *CucumberRunner) executeRuleWithReporter(rule *messages.Rule, featureBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
-	reporter.RuleStart(rule.Name)
-
-	var ruleBackground *messages.Background
-
-	for _, child := range rule.Children {
-		if child.Background != nil {
-			ruleBackground = child.Background
-		} else if child.Scenario != nil {
-			// Expand scenario outline and execute each expanded scenario
-			for _, expanded := range expandScenarioOutline(child.Scenario) {
-				// Execute feature background before each expanded scenario
-				if featureBackground != nil {
-					reporter.BackgroundStart()
-					if err := c.executeBackgroundStepsWithReporter(featureBackground, reporter); err != nil {
-						// Mark scenario as failed since background failed
-						cacikScenario := cacik.ScenarioFromMessage(expanded)
-						bgErr := fmt.Errorf("feature background failed: %w", err)
-						if c.hookExecutor != nil {
-							c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
-							c.hookExecutor.ExecuteAfterScenario(cacikScenario, bgErr)
-						}
-						reporter.AddScenarioResult(false)
-						if failFast {
-							return fmt.Errorf("scenario %q failed: %w", expanded.Name, err)
-						}
-						continue
-					}
-				}
-				// Execute rule background and scenario
-				if err := c.executeScenarioWithReporter(expanded, ruleBackground, nil, reporter, failFast); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
-// executeScenarioWithReporter executes a scenario with reporter lifecycle calls
-func (c *CucumberRunner) executeScenarioWithReporter(scenario *messages.Scenario, background *messages.Background, ruleBackground *messages.Background, reporter *cacik.ConsoleReporter, failFast bool) error {
-	cacikScenario := cacik.ScenarioFromMessage(scenario)
-
-	// Execute BeforeScenario hooks
-	if c.hookExecutor != nil {
-		c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
-	}
-
-	var scenarioErr error
-	defer func() {
-		// Execute AfterScenario hooks (always runs)
-		if c.hookExecutor != nil {
-			c.hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
-		}
-	}()
-
-	// Execute background if present
-	if background != nil {
-		reporter.BackgroundStart()
-		if err := c.executeBackgroundStepsWithReporter(background, reporter); err != nil {
-			// Background failed - skip scenario steps and mark remaining as skipped
-			scenarioErr = fmt.Errorf("background step failed")
-			reporter.ScenarioStart(scenario.Name)
-			for _, step := range scenario.Steps {
-				reporter.StepSkipped(step.Keyword, step.Text)
-				reportStepDataTable(reporter, step)
-				reporter.AddStepResult(false, true)
-			}
-			reporter.AddScenarioResult(false)
-			if failFast {
-				return fmt.Errorf("scenario %q failed: background step failed", scenario.Name)
-			}
-			return nil // Continue with next scenario
-		}
-	}
-
-	reporter.ScenarioStart(scenario.Name)
-
-	scenarioPassed := true
-	for i, step := range scenario.Steps {
-		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-			scenarioPassed = false
-			scenarioErr = err
-			// Skip remaining steps
-			for j := i + 1; j < len(scenario.Steps); j++ {
-				remainingStep := scenario.Steps[j]
-				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-				reportStepDataTable(reporter, remainingStep)
-				reporter.AddStepResult(false, true)
-			}
-			break
-		}
-	}
-
-	reporter.AddScenarioResult(scenarioPassed)
-
-	if !scenarioPassed && failFast {
-		return fmt.Errorf("scenario %q failed: %w", scenario.Name, scenarioErr)
-	}
-	return nil
-}
-
-// executeBackgroundStepsWithReporter executes background steps with reporter
-func (c *CucumberRunner) executeBackgroundStepsWithReporter(background *messages.Background, reporter *cacik.ConsoleReporter) error {
-	for i, step := range background.Steps {
-		if err := c.executor.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-			// Skip remaining background steps
-			for j := i + 1; j < len(background.Steps); j++ {
-				remainingStep := background.Steps[j]
-				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-				reportStepDataTable(reporter, remainingStep)
-				reporter.AddStepResult(false, true)
-			}
-			return err
-		}
-	}
-	return nil
-}
-
 // resolveSettings resolves runtime settings from config and CLI flags.
 // CLI flags always override config values.
-func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColors bool, disableLog bool, disableReporter bool) {
+func (c *CucumberRunner) resolveSettings() (failFast bool, useColors bool, disableLog bool, disableReporter bool) {
 	// Start with config values (if any)
 	if c.config != nil {
-		workers = c.config.Parallel
 		failFast = c.config.FailFast
 		useColors = !c.config.NoColor
 		disableLog = c.config.DisableLog
@@ -597,9 +342,6 @@ func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColor
 	}
 
 	// CLI overrides
-	if cliWorkers := parseParallelFromArgs(); cliWorkers > 0 {
-		workers = cliWorkers
-	}
 	if parseFailFastFromArgs() {
 		failFast = true
 	}
@@ -613,7 +355,7 @@ func (c *CucumberRunner) resolveSettings() (workers int, failFast bool, useColor
 		disableReporter = true
 	}
 
-	return workers, failFast, useColors, disableLog, disableReporter
+	return failFast, useColors, disableLog, disableReporter
 }
 
 // parseTagsFromArgs extracts the tag expression from command-line arguments.
@@ -754,7 +496,7 @@ func hasRuleScenarios(rule *messages.Rule) bool {
 }
 
 // =============================================================================
-// Parallel Execution Support
+// Scenario Execution Types
 // =============================================================================
 
 // ScenarioExecution holds a scenario with its associated backgrounds for execution
@@ -765,12 +507,6 @@ type ScenarioExecution struct {
 	FeatureFile       string
 	FeatureName       string
 	RuleName          string
-}
-
-// ScenarioResult holds the result of executing a scenario
-type ScenarioResult struct {
-	Execution *ScenarioExecution
-	Error     error
 }
 
 // documentWithFile pairs a parsed document with its source file path
@@ -823,29 +559,6 @@ func parseFailFastFromArgs() bool {
 	return false
 }
 
-// parseParallelFromArgs extracts the parallel worker count from command-line arguments.
-// Supports: --parallel 4 or --parallel=4
-// Returns 1 (sequential) if not specified or invalid.
-func parseParallelFromArgs() int {
-	args := os.Args[1:]
-	for i, arg := range args {
-		if arg == "--parallel" && i+1 < len(args) {
-			n, err := strconv.Atoi(args[i+1])
-			if err == nil && n > 0 {
-				return n
-			}
-		}
-		if strings.HasPrefix(arg, "--parallel=") {
-			val := strings.TrimPrefix(arg, "--parallel=")
-			n, err := strconv.Atoi(val)
-			if err == nil && n > 0 {
-				return n
-			}
-		}
-	}
-	return 1
-}
-
 // collectScenarios gathers all scenarios from documents with their backgrounds
 func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioExecution {
 	var scenarios []ScenarioExecution
@@ -893,296 +606,6 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 		}
 	}
 	return scenarios
-}
-
-// executeScenarioWithIsolatedContext executes a single scenario with its own context
-func (c *CucumberRunner) executeScenarioWithIsolatedContext(exec ScenarioExecution) error {
-	// Create fresh context for this scenario
-	opts := make([]cacik.Option, 0)
-	if c.logger != nil {
-		opts = append(opts, cacik.WithLogger(c.logger))
-	}
-	ctx := cacik.New(opts...)
-
-	// Clone executor and set context
-	isolatedExec := c.executor.Clone()
-	isolatedExec.SetCacikContext(ctx)
-
-	// Execute feature background
-	if exec.FeatureBackground != nil {
-		for _, step := range exec.FeatureBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-				return fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
-			}
-		}
-	}
-
-	// Execute rule background
-	if exec.RuleBackground != nil {
-		for _, step := range exec.RuleBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-				return fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
-			}
-		}
-	}
-
-	// Execute scenario steps
-	for _, step := range exec.Scenario.Steps {
-		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-			return fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
-		}
-	}
-
-	return nil
-}
-
-// executeParallel runs scenarios in parallel using a worker pool
-func (c *CucumberRunner) executeParallel(scenarios []ScenarioExecution, workers int) []ScenarioResult {
-	jobs := make(chan ScenarioExecution, len(scenarios))
-	results := make(chan ScenarioResult, len(scenarios))
-
-	// Start workers
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for scenario := range jobs {
-				err := c.executeScenarioWithIsolatedContext(scenario)
-				results <- ScenarioResult{
-					Execution: &scenario,
-					Error:     err,
-				}
-			}
-		}()
-	}
-
-	// Send jobs
-	for _, s := range scenarios {
-		jobs <- s
-	}
-	close(jobs)
-
-	// Wait and close results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	var allResults []ScenarioResult
-	for r := range results {
-		allResults = append(allResults, r)
-	}
-	return allResults
-}
-
-// executeParallelWithReporter runs scenarios in parallel with buffered reporters
-func (c *CucumberRunner) executeParallelWithReporter(scenarios []ScenarioExecution, workers int, useColors bool, mainReporter *cacik.ConsoleReporter, failFast bool, disableReporter bool) []ScenarioResult {
-	type resultWithReporter struct {
-		result   ScenarioResult
-		reporter *cacik.ConsoleReporter
-	}
-
-	jobs := make(chan ScenarioExecution, len(scenarios))
-	results := make(chan resultWithReporter, len(scenarios))
-
-	// For fail-fast: track if we should stop
-	var failed int32 // atomic flag
-
-	// Start workers
-	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for scenario := range jobs {
-				// Check if we should skip due to fail-fast
-				if failFast && atomic.LoadInt32(&failed) == 1 {
-					// Still need to drain the channel but skip execution
-					continue
-				}
-
-				reporter, err := c.executeScenarioWithBufferedReporter(scenario, useColors, disableReporter)
-
-				// Mark as failed if this scenario failed
-				if err != nil && failFast {
-					atomic.StoreInt32(&failed, 1)
-				}
-
-				results <- resultWithReporter{
-					result: ScenarioResult{
-						Execution: &scenario,
-						Error:     err,
-					},
-					reporter: reporter,
-				}
-			}
-		}()
-	}
-
-	// Send jobs
-	for _, s := range scenarios {
-		jobs <- s
-	}
-	close(jobs)
-
-	// Wait and close results
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results and flush output atomically
-	var allResults []ScenarioResult
-	for r := range results {
-		// Flush buffered output atomically
-		r.reporter.Flush()
-		// Merge summary into main reporter
-		mainReporter.MergeSummary(r.reporter)
-		allResults = append(allResults, r.result)
-	}
-	return allResults
-}
-
-// executeScenarioWithBufferedReporter executes a scenario with a buffered reporter
-func (c *CucumberRunner) executeScenarioWithBufferedReporter(exec ScenarioExecution, useColors bool, disableReporter bool) (*cacik.ConsoleReporter, error) {
-	// Create buffered reporter for this scenario
-	var reporter *cacik.ConsoleReporter
-	if disableReporter {
-		reporter = cacik.NewNoopConsoleReporter()
-	} else {
-		reporter = cacik.NewBufferedReporter(useColors)
-	}
-
-	// Create fresh context for this scenario
-	opts := make([]cacik.Option, 0)
-	if c.logger != nil {
-		opts = append(opts, cacik.WithLogger(c.logger))
-	}
-	opts = append(opts, cacik.WithReporter(reporter))
-	ctx := cacik.New(opts...)
-
-	// Clone executor and set context
-	isolatedExec := c.executor.Clone()
-	isolatedExec.SetCacikContext(ctx)
-	if c.hookExecutor != nil {
-		isolatedExec.SetHookExecutor(c.hookExecutor)
-	}
-
-	// Build cacik.Scenario for hooks
-	cacikScenario := cacik.ScenarioFromMessage(exec.Scenario)
-
-	// Execute BeforeScenario hooks
-	if c.hookExecutor != nil {
-		c.hookExecutor.ExecuteBeforeScenario(cacikScenario)
-	}
-
-	var execErr error
-	defer func() {
-		// Execute AfterScenario hooks (always runs, even on early return)
-		if c.hookExecutor != nil {
-			c.hookExecutor.ExecuteAfterScenario(cacikScenario, execErr)
-		}
-	}()
-
-	// Print feature header
-	reporter.FeatureStart(exec.FeatureName)
-
-	// Print rule header if this scenario belongs to a rule
-	if exec.RuleName != "" {
-		reporter.RuleStart(exec.RuleName)
-	}
-
-	scenarioPassed := true
-
-	// Execute feature background
-	if exec.FeatureBackground != nil {
-		reporter.BackgroundStart()
-		for i, step := range exec.FeatureBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-				scenarioPassed = false
-				execErr = fmt.Errorf("[%s] feature background step %q failed: %w", exec.FeatureFile, step.Text, err)
-				// Skip remaining background steps
-				for j := i + 1; j < len(exec.FeatureBackground.Steps); j++ {
-					remainingStep := exec.FeatureBackground.Steps[j]
-					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-					reportStepDataTable(reporter, remainingStep)
-					reporter.AddStepResult(false, true)
-				}
-				// Skip scenario steps
-				reporter.ScenarioStart(exec.Scenario.Name)
-				for _, step := range exec.Scenario.Steps {
-					reporter.StepSkipped(step.Keyword, step.Text)
-					reportStepDataTable(reporter, step)
-					reporter.AddStepResult(false, true)
-				}
-				reporter.AddScenarioResult(false)
-				return reporter, execErr
-			}
-		}
-	}
-
-	// Execute rule background
-	if exec.RuleBackground != nil {
-		reporter.BackgroundStart()
-		for i, step := range exec.RuleBackground.Steps {
-			if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-				scenarioPassed = false
-				execErr = fmt.Errorf("[%s] rule background step %q failed: %w", exec.FeatureFile, step.Text, err)
-				// Skip remaining background steps
-				for j := i + 1; j < len(exec.RuleBackground.Steps); j++ {
-					remainingStep := exec.RuleBackground.Steps[j]
-					reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-					reportStepDataTable(reporter, remainingStep)
-					reporter.AddStepResult(false, true)
-				}
-				// Skip scenario steps
-				reporter.ScenarioStart(exec.Scenario.Name)
-				for _, step := range exec.Scenario.Steps {
-					reporter.StepSkipped(step.Keyword, step.Text)
-					reportStepDataTable(reporter, step)
-					reporter.AddStepResult(false, true)
-				}
-				reporter.AddScenarioResult(false)
-				return reporter, execErr
-			}
-		}
-	}
-
-	// Execute scenario steps
-	reporter.ScenarioStart(exec.Scenario.Name)
-	for i, step := range exec.Scenario.Steps {
-		if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
-			scenarioPassed = false
-			execErr = fmt.Errorf("[%s] scenario %q step %q failed: %w", exec.FeatureFile, exec.Scenario.Name, step.Text, err)
-			// Skip remaining steps
-			for j := i + 1; j < len(exec.Scenario.Steps); j++ {
-				remainingStep := exec.Scenario.Steps[j]
-				reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-				reportStepDataTable(reporter, remainingStep)
-				reporter.AddStepResult(false, true)
-			}
-			break
-		}
-	}
-
-	reporter.AddScenarioResult(scenarioPassed)
-	return reporter, execErr
-}
-
-// formatErrors formats multiple errors into a single error message
-func formatErrors(results []ScenarioResult) string {
-	var sb strings.Builder
-	for i, r := range results {
-		if r.Error != nil {
-			if i > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(fmt.Sprintf("- %s: %v", r.Execution.Scenario.Name, r.Error))
-		}
-	}
-	return sb.String()
 }
 
 // expandScenarioOutline expands a Scenario Outline into concrete scenarios by

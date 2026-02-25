@@ -97,12 +97,6 @@ func regexEscape(s string) string {
 	return result
 }
 
-// isTestMode returns true when the output targets a Go test file (cacik_test.go)
-// rather than a standalone main.go.
-func (o *Output) isTestMode() bool {
-	return o.PackageName != ""
-}
-
 // isSamePackage returns true when the function is in the same package as the
 // generated test file and therefore should be called without an import qualifier.
 func (o *Output) isSamePackage(fullPkg string) bool {
@@ -119,9 +113,9 @@ func (o *Output) qualOrLocal(fullPkg, funcName string) *jen.Statement {
 }
 
 func (o *Output) Generate(writer io.Writer) error {
-	pkgName := "main"
-	if o.isTestMode() {
-		pkgName = o.PackageName
+	pkgName := o.PackageName
+	if pkgName == "" {
+		pkgName = "main"
 	}
 	mainFile := jen.NewFile(pkgName)
 
@@ -149,13 +143,8 @@ func (o *Output) Generate(writer io.Writer) error {
 		)
 	}
 
-	// Build runner chain
-	runnerChain := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call().Id(".").Line()
-
-	// Add WithTestingT(t) in test mode
-	if o.isTestMode() {
-		runnerChain.Id("WithTestingT").Call(jen.Id("t")).Id(".").Line()
-	}
+	// Build runner chain — always pass t to NewCucumberRunner
+	runnerChain := jen.Id("err").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/runner", "NewCucumberRunner").Call(jen.Id("t")).Id(".").Line()
 
 	// Add WithConfig if we have configs
 	if len(o.ConfigFunctions) > 0 {
@@ -192,31 +181,17 @@ func (o *Output) Generate(writer io.Writer) error {
 
 	statements = append(statements, runnerChain)
 
-	// Error handling
-	if o.isTestMode() {
-		// In test mode: use t.Fatal(err) instead of log.Fatal(err)
-		statements = append(statements,
-			jen.If(jen.Id("err").Op("!=").Nil()).Block(
-				jen.Id("t").Dot("Fatal").Call(jen.Id("err")),
-			),
-		)
-	} else {
-		statements = append(statements,
-			jen.If(jen.Id("err").Op("!=").Nil()).Block(
-				jen.Qual("log", "Fatal").Call(jen.Id("err")),
-			),
-		)
-	}
+	// Error handling: always use t.Fatal(err)
+	statements = append(statements,
+		jen.If(jen.Id("err").Op("!=").Nil()).Block(
+			jen.Id("t").Dot("Fatal").Call(jen.Id("err")),
+		),
+	)
 
-	// Build the function declaration
-	if o.isTestMode() {
-		// func TestCacik(t *testing.T) { ... }
-		mainFile.Func().Id("TestCacik").Params(
-			jen.Id("t").Op("*").Qual("testing", "T"),
-		).Block(statements...)
-	} else {
-		mainFile.Func().Id("main").Params().Block(statements...)
-	}
+	// Always generate func TestCacik(t *testing.T) { ... }
+	mainFile.Func().Id("TestCacik").Params(
+		jen.Id("t").Op("*").Qual("testing", "T"),
+	).Block(statements...)
 
 	_, err := writer.Write([]byte(mainFile.GoString()))
 

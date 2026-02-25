@@ -2,13 +2,8 @@ package cacik
 
 // Config holds runtime configuration settings for cacik.
 // Settings are merged from all discovered config functions (last wins).
-// CLI flags (--parallel, --fail-fast, --no-color, --disable-log, --disable-reporter) always override code config.
+// CLI flags (--fail-fast, --no-color, --disable-log, --disable-reporter) always override code config.
 type Config struct {
-	// Parallel sets the number of parallel workers.
-	// 0 = sequential execution (default)
-	// >0 = parallel execution with specified number of workers
-	Parallel int
-
 	// FailFast stops execution on first scenario failure.
 	FailFast bool
 
@@ -40,9 +35,6 @@ func MergeConfigs(configs ...*Config) *Config {
 			continue
 		}
 
-		if cfg.Parallel != 0 {
-			result.Parallel = cfg.Parallel
-		}
 		if cfg.FailFast {
 			result.FailFast = true
 		}

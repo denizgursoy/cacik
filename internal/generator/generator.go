@@ -45,19 +45,16 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 		// Detect package name and full import path for the CWD
 		pkgName, pkgPath, detectErr := detectPackage()
 		if detectErr != nil {
-			log.Printf("warning: could not detect package, falling back to main.go: %v", detectErr)
-			// Fall back to main.go style
-		} else {
+			log.Printf("warning: could not detect package: %v", detectErr)
+		}
+		if pkgName != "" {
 			recursively.PackageName = pkgName
+		}
+		if pkgPath != "" {
 			recursively.CurrentPackagePath = pkgPath
 		}
 
-		outputFile := "main.go"
-		if recursively.PackageName != "" {
-			outputFile = "cacik_test.go"
-		}
-
-		create, err := os.Create(outputFile)
+		create, err := os.Create("cacik_test.go")
 		if err != nil {
 			return err
 		}
@@ -113,7 +110,7 @@ func detectPackageName(dir string) (string, error) {
 			continue
 		}
 		// Skip the files we generate
-		if name == "cacik_test.go" || name == "main.go" {
+		if name == "cacik_test.go" {
 			continue
 		}
 

@@ -5,7 +5,6 @@ import "github.com/denizgursoy/cacik/pkg/cacik"
 // MyConfig returns configuration settings
 func MyConfig() *cacik.Config {
 	return &cacik.Config{
-		Parallel: 4,
 		FailFast: true,
 	}
 }
