@@ -21,6 +21,24 @@ const (
 	colorYellow       = "\033[33m"               // skipped step symbol
 )
 
+// colorParams maps capture-group position to a distinct color so that
+// the nth parameter in every step is rendered in the same tone.
+// When there are more capture groups than entries the index wraps around.
+// Colors are chosen to avoid clashing with existing UI colors (keyword orange,
+// text gray, outline pink, pass green, fail red, skip yellow).
+var colorParams = []string{
+	"\033[38;2;92;146;255m",  // #5C92FF — bright blue
+	"\033[38;2;0;206;209m",   // #00CED1 — cyan
+	"\033[38;2;229;192;123m", // #E5C07B — gold
+	"\033[38;2;192;160;255m", // #C0A0FF — lavender
+	"\033[38;2;152;195;121m", // #98C379 — lime
+	"\033[38;2;86;182;194m",  // #56B6C2 — teal
+	"\033[38;2;224;108;117m", // #E06C75 — rose
+	"\033[38;2;209;154;102m", // #D19A66 — amber
+	"\033[38;2;126;206;160m", // #7ECEA0 — mint
+	"\033[38;2;169;147;214m", // #A993D6 — violet
+}
+
 // Symbols for step status
 const (
 	symbolPass = "✓"
@@ -221,6 +239,7 @@ func (r *ConsoleReporter) colorizeStepText(text string, matchLocs []int) string 
 
 	var b strings.Builder
 	prev := 0
+	paramIdx := 0
 	for i := 0; i+1 < len(matchLocs); i += 2 {
 		start, end := matchLocs[i], matchLocs[i+1]
 		if start < 0 || end < 0 || start > len(text) || end > len(text) || start >= end {
@@ -232,10 +251,11 @@ func (r *ConsoleReporter) colorizeStepText(text string, matchLocs []int) string 
 			b.WriteString(text[prev:start])
 			b.WriteString(colorReset)
 		}
-		// Capture group — parameter color
-		b.WriteString(colorParam)
+		// Capture group — positional parameter color (nth param always same shade)
+		b.WriteString(colorParams[paramIdx%len(colorParams)])
 		b.WriteString(text[start:end])
 		b.WriteString(colorReset)
+		paramIdx++
 		prev = end
 	}
 	// Remaining text after last capture group
