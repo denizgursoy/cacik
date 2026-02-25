@@ -353,7 +353,7 @@ When I select Red
 
 ### Function Signature
 
-Step functions do not return anything. Use `ctx.SetError()` or `ctx.Errorf()` for error handling:
+Step functions do not return anything. Use `ctx.Assert()` for assertions or `ctx.TestingT()` for direct test control:
 
 ```go
 // Simple function with no arguments
