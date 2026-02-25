@@ -54,3 +54,25 @@ Feature: Mixed parameter types
     And I have 1 medium blue boxes
     And I have 1 LARGE green boxes
     And I have 1 large green boxes
+
+  Scenario: Schedule with date and time
+    Given schedule from 2024-01-15 at 9:00 to 2024-01-15 at 17:00
+    And schedule from 15/01/2024 at 9:00am to 15/01/2024 at 5:00pm
+
+  Scenario: Tasks with count, date, and time
+    Given I have 5 tasks due on 2024-01-15 at 17:00
+    And I have 10 tasks due on 31/01/2024 at 11:59pm
+
+  Scenario: Event with name and datetime
+    Given event "Team Meeting" starts at 2024-01-15 10:00
+    And event "Product Launch" starts at 2024-06-01T09:00 Europe/London
+
+  Scenario: Meeting with time and explicit timezone
+    Given meeting at 14:30 in Europe/London
+    And meeting at 9:00am in America/New_York
+    And meeting at 18:00 in Asia/Tokyo
+
+  Scenario: Convert datetime to timezone
+    Given convert 2024-01-15T14:30:00Z to Europe/London
+    And convert 2024-01-15T14:30:00Z to America/New_York
+    And convert 2024-06-15 09:00+05:30 to UTC

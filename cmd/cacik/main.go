@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"os"
+	"log"
 
 	"github.com/denizgursoy/cacik/internal/comment_parser"
 	"github.com/denizgursoy/cacik/internal/generator"
@@ -11,6 +11,6 @@ import (
 func main() {
 	err := generator.StartGenerator(context.Background(), comment_parser.NewGoSourceFileParser())
 	if err != nil {
-		os.Exit(1)
+		log.Fatal(err.Error())
 	}
 }

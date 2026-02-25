@@ -11,7 +11,3 @@ Feature: String parameter types
   Scenario: Error messages
     Given the error message is "File not found"
     And the error message is "Connection timeout"
-
-  Scenario: Single word with {word}
-    Given the title is Hello
-    And the title is Test123

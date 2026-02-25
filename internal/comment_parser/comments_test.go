@@ -185,29 +185,37 @@ func TestStepBool(t *testing.T) {
 	require.Contains(t, caps["FeatureToggle"], []string{"disabled"})
 }
 
-func TestStepBuiltin(t *testing.T) {
-	dir := filepath.Join(testdataDir(t), "step-builtin")
+func TestStepWord(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-word")
 	out := parseDir(t, dir)
 	stepMap := buildStepMap(out)
 
-	require.Equal(t, `^I have (-?\d+) apples$`, stepMap["HaveApples"])
-	require.Equal(t, `^the price is (-?\d*\.?\d+)$`, stepMap["PriceIs"])
 	require.Equal(t, `^my name is (\w+)$`, stepMap["NameIs"])
-	require.Equal(t, `^I say "([^"]*)"$`, stepMap["Say"])
-	require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+	require.Equal(t, `^the status is (\w+)$`, stepMap["StatusIs"])
 
 	caps := assertAllStepsMatch(t, dir)
-	require.Contains(t, caps["HaveApples"], []string{"5"})
-	require.Contains(t, caps["HaveApples"], []string{"-3"})
-	require.Contains(t, caps["PriceIs"], []string{"19.99"})
-	require.Contains(t, caps["PriceIs"], []string{"-0.5"})
-	require.Contains(t, caps["PriceIs"], []string{"100"})
 	require.Contains(t, caps["NameIs"], []string{"John"})
 	require.Contains(t, caps["NameIs"], []string{"test123"})
-	require.Contains(t, caps["Say"], []string{"Hello World"})
-	require.Contains(t, caps["Say"], []string{"Testing with spaces and punctuation!"})
+	require.Contains(t, caps["NameIs"], []string{"Alice"})
+	require.Contains(t, caps["StatusIs"], []string{"active"})
+	require.Contains(t, caps["StatusIs"], []string{"pending"})
+	require.Contains(t, caps["StatusIs"], []string{"DONE"})
+}
+
+func TestStepAny(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-any")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	require.Equal(t, `^I see (.*)$`, stepMap["SeeAnything"])
+	require.Equal(t, `^the description is (.*)$`, stepMap["DescriptionIs"])
+
+	caps := assertAllStepsMatch(t, dir)
 	require.Contains(t, caps["SeeAnything"], []string{"anything at all here"})
 	require.Contains(t, caps["SeeAnything"], []string{"123 mixed content!"})
+	require.Contains(t, caps["SeeAnything"], []string{"special chars: @#$% and more"})
+	require.Contains(t, caps["DescriptionIs"], []string{"a long text with spaces and punctuation!"})
+	require.Contains(t, caps["DescriptionIs"], []string{"42"})
 }
 
 func TestStepFloat(t *testing.T) {
@@ -234,7 +242,6 @@ func TestStepString(t *testing.T) {
 
 	require.Equal(t, `^the user says "([^"]*)"$`, stepMap["UserSays"])
 	require.Equal(t, `^the error message is "([^"]*)"$`, stepMap["ErrorMessageIs"])
-	require.Equal(t, `^the title is (\w+)$`, stepMap["TitleIs"])
 
 	caps := assertAllStepsMatch(t, dir)
 	require.Contains(t, caps["UserSays"], []string{"Hello World"})
@@ -243,8 +250,6 @@ func TestStepString(t *testing.T) {
 	require.Contains(t, caps["UserSays"], []string{""})
 	require.Contains(t, caps["ErrorMessageIs"], []string{"File not found"})
 	require.Contains(t, caps["ErrorMessageIs"], []string{"Connection timeout"})
-	require.Contains(t, caps["TitleIs"], []string{"Hello"})
-	require.Contains(t, caps["TitleIs"], []string{"Test123"})
 }
 
 func TestStepColor(t *testing.T) {
@@ -304,42 +309,91 @@ func TestStepPriority(t *testing.T) {
 	require.NotEmpty(t, caps["PriorityIs"])
 }
 
-func TestStepTable(t *testing.T) {
-	dir := filepath.Join(testdataDir(t), "step-table")
+func TestStepTime(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-time")
 	out := parseDir(t, dir)
 	stepMap := buildStepMap(out)
 
-	require.Equal(t, `^the following users:$`, stepMap["TheFollowingUsers"])
-	require.Equal(t, `^there should be (-?\d+) users$`, stepMap["ThereShouldBeNUsers"])
-	require.Equal(t, `^I have (-?\d+) items:$`, stepMap["IHaveItems"])
-	require.Equal(t, `^the coordinates are:$`, stepMap["Coordinates"])
+	// Both use {time}
+	require.Len(t, stepMap, 2)
+	require.Contains(t, stepMap["MeetingAt"], `\d{1,2}:\d{2}`)
+	require.Contains(t, stepMap["TimeBetween"], `\d{1,2}:\d{2}`)
 
-	// Table steps end with ":" — step text still matches pattern
 	caps := assertAllStepsMatch(t, dir)
-	require.Contains(t, caps["ThereShouldBeNUsers"], []string{"2"})
-	require.Contains(t, caps["IHaveItems"], []string{"3"})
+
+	// 24-hour format
+	require.Contains(t, caps["MeetingAt"], []string{"14:30"})
+	require.Contains(t, caps["MeetingAt"], []string{"09:15"})
+	require.Contains(t, caps["MeetingAt"], []string{"00:00"})
+	// With seconds
+	require.Contains(t, caps["MeetingAt"], []string{"14:30:45"})
+	// With AM/PM
+	require.Contains(t, caps["MeetingAt"], []string{"2:30pm"})
+	require.Contains(t, caps["MeetingAt"], []string{"9:15am"})
+	// With timezone
+	require.Contains(t, caps["MeetingAt"], []string{"14:30Z"})
+	require.Contains(t, caps["MeetingAt"], []string{"14:30 Europe/London"})
+	require.Contains(t, caps["MeetingAt"], []string{"10:00am UTC"})
+	// Time range
+	require.Contains(t, caps["TimeBetween"], []string{"9:00", "21:00"})
+	require.Contains(t, caps["TimeBetween"], []string{"9:00am", "9:00pm"})
 }
 
-func TestStepRule(t *testing.T) {
-	dir := filepath.Join(testdataDir(t), "step-rule")
+func TestStepDate(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-date")
 	out := parseDir(t, dir)
 	stepMap := buildStepMap(out)
 
-	require.Equal(t, `^the system is initialized$`, stepMap["SystemInitialized"])
-	require.Equal(t, `^the registration form is loaded$`, stepMap["RegistrationFormLoaded"])
-	require.Equal(t, `^the login page is loaded$`, stepMap["LoginPageLoaded"])
-	require.Equal(t, `^the user registers with "([^"]*)"$`, stepMap["UserRegisters"])
-	require.Equal(t, `^the registration should succeed$`, stepMap["RegistrationSucceed"])
-	require.Equal(t, `^the registration should fail$`, stepMap["RegistrationFail"])
-	require.Equal(t, `^the user logs in with "([^"]*)" and "([^"]*)"$`, stepMap["UserLogsIn"])
-	require.Equal(t, `^the login should succeed$`, stepMap["LoginSucceed"])
-	require.Equal(t, `^the login should fail$`, stepMap["LoginFail"])
+	// Both use {date}
+	require.Len(t, stepMap, 2)
+	require.Contains(t, stepMap["EventOn"], `\d{4}[-/]\d{2}[-/]\d{2}`)
+	require.Contains(t, stepMap["DateRange"], `\d{4}[-/]\d{2}[-/]\d{2}`)
 
 	caps := assertAllStepsMatch(t, dir)
-	require.Contains(t, caps["UserRegisters"], []string{"alice@example.com"})
-	require.Contains(t, caps["UserRegisters"], []string{"not-an-email"})
-	require.Contains(t, caps["UserLogsIn"], []string{"alice", "secret"})
-	require.Contains(t, caps["UserLogsIn"], []string{"alice", "wrong"})
+
+	// EU format
+	require.Contains(t, caps["EventOn"], []string{"15/01/2024"})
+	require.Contains(t, caps["EventOn"], []string{"31/12/2024"})
+	// ISO format
+	require.Contains(t, caps["EventOn"], []string{"2024-01-15"})
+	require.Contains(t, caps["EventOn"], []string{"2024-12-31"})
+	// Written format
+	require.Contains(t, caps["EventOn"], []string{"15 Jan 2024"})
+	require.Contains(t, caps["EventOn"], []string{"15 January 2024"})
+	require.Contains(t, caps["EventOn"], []string{"Jan 15, 2024"})
+	// Date range
+	require.Contains(t, caps["DateRange"], []string{"2024-01-01", "2024-12-31"})
+	require.Contains(t, caps["DateRange"], []string{"01/01/2024", "31/12/2024"})
+	require.Contains(t, caps["DateRange"], []string{"1 Jan 2024", "31 Dec 2024"})
+}
+
+func TestStepTimezone(t *testing.T) {
+	dir := filepath.Join(testdataDir(t), "step-timezone")
+	out := parseDir(t, dir)
+	stepMap := buildStepMap(out)
+
+	// Both use {timezone}
+	require.Len(t, stepMap, 2)
+	require.Contains(t, stepMap["ConvertToTimezone"], "Z")
+	require.Contains(t, stepMap["ConvertToTimezone"], "UTC")
+	require.Contains(t, stepMap["ShowTimeIn"], "UTC")
+
+	caps := assertAllStepsMatch(t, dir)
+
+	// Z and UTC
+	require.Contains(t, caps["ConvertToTimezone"], []string{"UTC"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"Z"})
+	// Offsets
+	require.Contains(t, caps["ConvertToTimezone"], []string{"+05:30"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"-08:00"})
+	// IANA names
+	require.Contains(t, caps["ConvertToTimezone"], []string{"Europe/London"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"America/New_York"})
+	require.Contains(t, caps["ConvertToTimezone"], []string{"Asia/Tokyo"})
+	// ShowTimeIn
+	require.Contains(t, caps["ShowTimeIn"], []string{"UTC"})
+	require.Contains(t, caps["ShowTimeIn"], []string{"Europe/London"})
+	require.Contains(t, caps["ShowTimeIn"], []string{"Asia/Tokyo"})
 }
 
 func TestStepDatetime(t *testing.T) {
@@ -347,24 +401,27 @@ func TestStepDatetime(t *testing.T) {
 	out := parseDir(t, dir)
 	stepMap := buildStepMap(out)
 
-	// Verify patterns contain expected substrings
-	require.Contains(t, stepMap["MeetingAt"], `\d{1,2}:\d{2}`)
-	require.Contains(t, stepMap["EventOn"], `\d{4}[-/]\d{2}[-/]\d{2}`)
+	// Only AppointmentAt and FlightDeparts remain — both use {datetime}
+	require.Len(t, stepMap, 2)
 	require.Contains(t, stepMap["AppointmentAt"], `\d{4}[-/]\d{2}[-/]\d{2}`)
 	require.Contains(t, stepMap["AppointmentAt"], `\d{1,2}:\d{2}`)
-	require.Contains(t, stepMap["ConvertToTimezone"], "Z")
-	require.Contains(t, stepMap["ConvertToTimezone"], "UTC")
+	require.Contains(t, stepMap["FlightDeparts"], `\d{4}[-/]\d{2}[-/]\d{2}`)
+	require.Contains(t, stepMap["FlightDeparts"], `\d{1,2}:\d{2}`)
 
 	// All steps must match a pattern
 	caps := assertAllStepsMatch(t, dir)
 
-	// Spot-check some captured values
-	require.Contains(t, caps["MeetingAt"], []string{"14:30"})
-	require.Contains(t, caps["MeetingAt"], []string{"09:15"})
-	require.Contains(t, caps["MeetingAt"], []string{"14:30:45"})
-	require.Contains(t, caps["EventOn"], []string{"2024-01-15"})
-	require.Contains(t, caps["ConvertToTimezone"], []string{"UTC"})
-	require.Contains(t, caps["ConvertToTimezone"], []string{"Europe/London"})
+	// Spot-check captured values — ISO with space
+	require.Contains(t, caps["AppointmentAt"], []string{"2024-01-15 14:30"})
+	require.Contains(t, caps["AppointmentAt"], []string{"2024-12-31 23:59:59"})
+	// ISO with T separator
+	require.Contains(t, caps["AppointmentAt"], []string{"2024-01-15T14:30"})
+	// With AM/PM
+	require.Contains(t, caps["AppointmentAt"], []string{"2024-01-15 2:30pm"})
+	// FlightDeparts with timezone
+	require.Contains(t, caps["FlightDeparts"], []string{"2024-01-15T14:30:00Z"})
+	require.Contains(t, caps["FlightDeparts"], []string{"2024-01-15T14:30:00+05:30"})
+	require.Contains(t, caps["FlightDeparts"], []string{"2024-01-15 14:30 Europe/London"})
 }
 
 func TestStepMixed(t *testing.T) {
@@ -381,6 +438,19 @@ func TestStepMixed(t *testing.T) {
 	require.Contains(t, stepMap["NamedItemWithPriority"], `"([^"]*)"`)
 	require.Contains(t, stepMap["SizedItemCount"], `(-?\d+)`)
 	require.Contains(t, stepMap["SizedItemCount"], "(?i:")
+
+	// Datetime combo patterns
+	require.Contains(t, stepMap["ScheduleRange"], `\d{1,2}:\d{2}`)              // {time}
+	require.Contains(t, stepMap["ScheduleRange"], `\d{4}[-/]\d{2}[-/]`)         // {date}
+	require.Contains(t, stepMap["DeadlineWithCount"], `(-?\d+)`)                // {int}
+	require.Contains(t, stepMap["DeadlineWithCount"], `\d{4}[-/]\d{2}`)         // {date}
+	require.Contains(t, stepMap["DeadlineWithCount"], `\d{1,2}:\d{2}`)          // {time}
+	require.Contains(t, stepMap["EventAtDateTime"], `"([^"]*)"`)                // {string}
+	require.Contains(t, stepMap["EventAtDateTime"], `\d{4}[-/]\d{2}`)           // {datetime}
+	require.Contains(t, stepMap["MeetingInTimezone"], `\d{1,2}:\d{2}`)          // {time}
+	require.Contains(t, stepMap["MeetingInTimezone"], "UTC")                    // {timezone}
+	require.Contains(t, stepMap["ConvertDatetimeToTimezone"], `\d{4}[-/]\d{2}`) // {datetime}
+	require.Contains(t, stepMap["ConvertDatetimeToTimezone"], "UTC")            // {timezone}
 
 	// Custom types parsed
 	require.Contains(t, out.CustomTypes, "color")
@@ -401,6 +471,24 @@ func TestStepMixed(t *testing.T) {
 
 	// "I have 5 small red boxes"
 	require.Contains(t, caps["SizedItemCount"], []string{"5", "small", "red"})
+
+	// Schedule with date and time: "schedule from 2024-01-15 at 9:00 to 2024-01-15 at 17:00"
+	// → captures: [date, time, date, time]
+	require.Contains(t, caps["ScheduleRange"], []string{"2024-01-15", "9:00", "2024-01-15", "17:00"})
+
+	// Tasks with count, date, and time: "I have 5 tasks due on 2024-01-15 at 17:00"
+	require.Contains(t, caps["DeadlineWithCount"], []string{"5", "2024-01-15", "17:00"})
+
+	// Event with name and datetime: "event "Team Meeting" starts at 2024-01-15 10:00"
+	require.Contains(t, caps["EventAtDateTime"], []string{"Team Meeting", "2024-01-15 10:00"})
+
+	// Meeting with time and timezone: "meeting at 14:30 in Europe/London"
+	require.Contains(t, caps["MeetingInTimezone"], []string{"14:30", "Europe/London"})
+	require.Contains(t, caps["MeetingInTimezone"], []string{"18:00", "Asia/Tokyo"})
+
+	// Convert datetime to timezone: "convert 2024-01-15T14:30:00Z to Europe/London"
+	require.Contains(t, caps["ConvertDatetimeToTimezone"], []string{"2024-01-15T14:30:00Z", "Europe/London"})
+	require.Contains(t, caps["ConvertDatetimeToTimezone"], []string{"2024-01-15T14:30:00Z", "America/New_York"})
 }
 
 // ─── new built-in type tests ────────────────────────────────────────────────
@@ -613,13 +701,15 @@ func TestAllDirectoriesHaveTests(t *testing.T) {
 	testedDirs := map[string]string{
 		"step-int":       "TestStepInt",
 		"step-bool":      "TestStepBool",
-		"step-builtin":   "TestStepBuiltin",
+		"step-word":      "TestStepWord",
+		"step-any":       "TestStepAny",
 		"step-float":     "TestStepFloat",
 		"step-string":    "TestStepString",
 		"step-color":     "TestStepColor",
 		"step-priority":  "TestStepPriority",
-		"step-table":     "TestStepTable",
-		"step-rule":      "TestStepRule",
+		"step-time":      "TestStepTime",
+		"step-date":      "TestStepDate",
+		"step-timezone":  "TestStepTimezone",
 		"step-datetime":  "TestStepDatetime",
 		"step-mixed":     "TestStepMixed",
 		"step-uuid":      "TestStepUUID",

@@ -1,6 +1,8 @@
 package step_mixed
 
 import (
+	"time"
+
 	"github.com/denizgursoy/cacik/pkg/cacik"
 )
 
@@ -71,4 +73,42 @@ func QuantityWithAny(ctx *cacik.Context, quantity int, item string) {
 // @cacik `^(enable|disable) the {color} (button|switch) and set active to {bool}$`
 func ConditionalAction(ctx *cacik.Context, action string, color Color, element string, active bool) {
 	ctx.Logger().Info("conditional action", "action", action, "color", color, "element", element, "active", active)
+}
+
+// ScheduleRange combines {date} and {time} in one step
+// @cacik `^schedule from {date} at {time} to {date} at {time}$`
+func ScheduleRange(ctx *cacik.Context, startDate, startTime, endDate, endTime time.Time) {
+	start := time.Date(startDate.Year(), startDate.Month(), startDate.Day(),
+		startTime.Hour(), startTime.Minute(), startTime.Second(), 0, startDate.Location())
+	end := time.Date(endDate.Year(), endDate.Month(), endDate.Day(),
+		endTime.Hour(), endTime.Minute(), endTime.Second(), 0, endDate.Location())
+	ctx.Logger().Info("schedule", "from", start.Format(time.RFC3339), "to", end.Format(time.RFC3339))
+}
+
+// DeadlineWithCount combines {int}, {date}, and {time}
+// @cacik `^I have {int} tasks due on {date} at {time}$`
+func DeadlineWithCount(ctx *cacik.Context, count int, date, t time.Time) {
+	deadline := time.Date(date.Year(), date.Month(), date.Day(),
+		t.Hour(), t.Minute(), t.Second(), 0, date.Location())
+	ctx.Logger().Info("tasks due", "count", count, "deadline", deadline.Format(time.RFC3339))
+}
+
+// EventAtDateTime combines {string} and {datetime}
+// @cacik `^event {string} starts at {datetime}$`
+func EventAtDateTime(ctx *cacik.Context, name string, dt time.Time) {
+	ctx.Logger().Info("event starts", "name", name, "datetime", dt.Format(time.RFC3339))
+}
+
+// MeetingInTimezone combines {time} with explicit {timezone}
+// @cacik `^meeting at {time} in {timezone}$`
+func MeetingInTimezone(ctx *cacik.Context, t time.Time, loc *time.Location) {
+	meeting := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, loc)
+	ctx.Logger().Info("meeting", "time", meeting.Format("15:04:05"), "timezone", loc.String())
+}
+
+// ConvertDatetimeToTimezone converts a datetime to a different timezone
+// @cacik `^convert {datetime} to {timezone}$`
+func ConvertDatetimeToTimezone(ctx *cacik.Context, dt time.Time, loc *time.Location) {
+	converted := dt.In(loc)
+	ctx.Logger().Info("converted datetime", "result", converted.Format(time.RFC3339))
 }
