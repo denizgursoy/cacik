@@ -192,6 +192,56 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 	})
 }
 
+func TestOutput_Generate_CustomTestFuncName(t *testing.T) {
+	t.Run("uses custom TestFuncName when set", func(t *testing.T) {
+		testData := Output{
+			PackageName:  "myapp",
+			TestFuncName: "TestBilling",
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^step 1$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "pkg",
+						FunctionName:    "Step1",
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		require.Contains(t, output, "func TestBilling(t *testing.T)")
+		require.NotContains(t, output, "func TestCacik(t *testing.T)")
+	})
+
+	t.Run("defaults to TestCacik when TestFuncName is empty", func(t *testing.T) {
+		testData := Output{
+			PackageName: "myapp",
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^step 1$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "pkg",
+						FunctionName:    "Step1",
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		require.Contains(t, output, "func TestCacik(t *testing.T)")
+	})
+}
+
 func TestCustomType_RegexPattern(t *testing.T) {
 	t.Run("generates case-insensitive pattern", func(t *testing.T) {
 		ct := &CustomType{

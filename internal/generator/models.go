@@ -35,6 +35,7 @@ type (
 		CustomTypes        map[string]*CustomType // lowercase type name -> CustomType
 		CurrentPackagePath string                 // Full import path of the package where the test file is generated
 		PackageName        string                 // Short package name (e.g., "myapp"); if empty, defaults to "main"
+		TestFuncName       string                 // Name of the generated test function (e.g., "TestBilling"); derived from output prefix
 	}
 )
 
@@ -188,8 +189,14 @@ func (o *Output) Generate(writer io.Writer) error {
 		),
 	)
 
-	// Always generate func TestCacik(t *testing.T) { ... }
-	mainFile.Func().Id("TestCacik").Params(
+	// Determine the test function name; default to "TestCacik" if not set.
+	testFuncName := o.TestFuncName
+	if testFuncName == "" {
+		testFuncName = "TestCacik"
+	}
+
+	// Always generate func Test<Name>(t *testing.T) { ... }
+	mainFile.Func().Id(testFuncName).Params(
 		jen.Id("t").Op("*").Qual("testing", "T"),
 	).Block(statements...)
 

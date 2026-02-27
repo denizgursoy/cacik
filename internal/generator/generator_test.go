@@ -58,41 +58,47 @@ func TestDetectPackageName(t *testing.T) {
 		dir, err := os.Getwd()
 		require.NoError(t, err)
 
-		pkgName, err := detectPackageName(dir)
+		pkgName, err := detectPackageName(dir, "cacik_test.go")
 		require.NoError(t, err)
 		require.Equal(t, "generator", pkgName)
 	})
 
-	t.Run("falls back to directory name when no Go files exist", func(t *testing.T) {
+	t.Run("returns empty string when no Go files exist", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Create a subdirectory with a known name
 		subDir := tmpDir + "/myfeatures"
 		require.NoError(t, os.Mkdir(subDir, 0o755))
 
-		pkgName, err := detectPackageName(subDir)
+		pkgName, err := detectPackageName(subDir, "cacik_test.go")
 		require.NoError(t, err)
-		require.Equal(t, "myfeatures", pkgName)
+		require.Equal(t, "", pkgName)
 	})
 
-	t.Run("sanitizes hyphens in directory name", func(t *testing.T) {
+	t.Run("skips generated output file when detecting package", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		subDir := tmpDir + "/my-cool-app"
+		subDir := tmpDir + "/myapp"
 		require.NoError(t, os.Mkdir(subDir, 0o755))
 
-		pkgName, err := detectPackageName(subDir)
+		// Only Go file is the generated output file — should be skipped, returns ""
+		require.NoError(t, os.WriteFile(subDir+"/cacik_test.go", []byte("package myapp"), 0o644))
+
+		pkgName, err := detectPackageName(subDir, "cacik_test.go")
 		require.NoError(t, err)
-		require.Equal(t, "my_cool_app", pkgName)
+		require.Equal(t, "", pkgName)
 	})
 
-	t.Run("uses module path at module root with no Go files", func(t *testing.T) {
+	t.Run("reads package from non-output Go file even when output file exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		// Create a go.mod in the temp dir
-		goMod := "module github.com/example/myproject\n\ngo 1.21\n"
-		require.NoError(t, os.WriteFile(tmpDir+"/go.mod", []byte(goMod), 0o644))
+		subDir := tmpDir + "/myapp"
+		require.NoError(t, os.Mkdir(subDir, 0o755))
 
-		pkgName, err := detectPackageName(tmpDir)
+		// Output file should be skipped
+		require.NoError(t, os.WriteFile(subDir+"/billing_test.go", []byte("package wrong"), 0o644))
+		// Real source file provides the package name
+		require.NoError(t, os.WriteFile(subDir+"/app.go", []byte("package myapp"), 0o644))
+
+		pkgName, err := detectPackageName(subDir, "billing_test.go")
 		require.NoError(t, err)
-		require.Equal(t, "myproject", pkgName)
+		require.Equal(t, "myapp", pkgName)
 	})
 }
 
@@ -114,25 +120,42 @@ func TestDetectImportPath(t *testing.T) {
 	})
 }
 
-func TestSanitizePackageName(t *testing.T) {
+func TestTestFuncNameFromPrefix(t *testing.T) {
 	tests := []struct {
-		input    string
+		prefix   string
 		expected string
 	}{
-		{"myapp", "myapp"},
-		{"my-app", "my_app"},
-		{"my.app", "my_app"},
-		{"MyApp", "myapp"},
-		{"123app", "_123app"},
-		{"", ""},
-		{"a", "a"},
-		{"-leading", "leading"},
-		{"with spaces", "withspaces"},
+		{"cacik", "TestCacik"},
+		{"billing", "TestBilling"},
+		{"my_feature", "TestMyFeature"},
+		{"a", "TestA"},
+		{"", "TestCacik"}, // empty defaults to "cacik"
+		{"user_auth_flow", "TestUserAuthFlow"},
+		{"x_y_z", "TestXYZ"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			result := sanitizePackageName(tt.input)
+		t.Run(tt.prefix, func(t *testing.T) {
+			result := testFuncNameFromPrefix(tt.prefix)
+			require.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestOutputFileFromPrefix(t *testing.T) {
+	tests := []struct {
+		prefix   string
+		expected string
+	}{
+		{"cacik", "cacik_test.go"},
+		{"billing", "billing_test.go"},
+		{"my_feature", "my_feature_test.go"},
+		{"", "cacik_test.go"}, // empty defaults to "cacik"
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.prefix, func(t *testing.T) {
+			result := outputFileFromPrefix(tt.prefix)
 			require.Equal(t, tt.expected, result)
 		})
 	}

@@ -698,11 +698,28 @@ When running in parallel, each scenario has its own context with a distinct ID, 
 go install github.com/denizgursoy/cacik/cmd/cacik@latest
 ```
 
-## Execute `cacik` to create cacik_test.go
+## Execute `cacik` to create the test file
 
 ```shell
 cacik
 ```
+
+By default, cacik generates `cacik_test.go` with `func TestCacik(t *testing.T)`.
+
+Use the `--output` flag to set a custom file name prefix:
+
+```shell
+cacik --output billing
+```
+
+This produces `billing_test.go` with `func TestBilling(t *testing.T)`. The prefix is used to derive both the file name (`<prefix>_test.go`) and the test function name (`Test<CamelCasedPrefix>`):
+
+| `--output` value | File name | Test function |
+|------------------|-----------|---------------|
+| _(default)_ | `cacik_test.go` | `TestCacik` |
+| `billing` | `billing_test.go` | `TestBilling` |
+| `my_feature` | `my_feature_test.go` | `TestMyFeature` |
+| `user_auth` | `user_auth_test.go` | `TestUserAuth` |
 
 Cacik will detect your package name and create a Go test file:
 

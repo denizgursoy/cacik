@@ -10,18 +10,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"golang.org/x/mod/modfile"
 )
 
 const (
-	Separator = ","
+	Separator             = ","
+	defaultFileNamePrefix = "cacik"
 )
 
 func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 	funcSources := make([]string, 0)
 
 	codeFlag := flag.String("code", "", "directories to search for functions seperated by comma")
+	outputFlag := flag.String("output", "", "output file prefix (e.g. 'billing' produces billing_test.go with TestBilling)")
 	flag.Parse()
 
 	if len(strings.TrimSpace(*codeFlag)) == 0 {
@@ -42,19 +45,29 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 			return err
 		}
 
+		// Resolve file name prefix: default or CLI flag
+		fileNamePrefix := defaultFileNamePrefix
+		if *outputFlag != "" {
+			fileNamePrefix = *outputFlag
+		}
+
+		outputFile := outputFileFromPrefix(fileNamePrefix)
+		recursively.TestFuncName = testFuncNameFromPrefix(fileNamePrefix)
+
 		// Detect package name and full import path for the CWD
-		pkgName, pkgPath, detectErr := detectPackage()
+		pkgName, pkgPath, detectErr := detectPackage(outputFile)
 		if detectErr != nil {
 			log.Printf("warning: could not detect package: %v", detectErr)
 		}
-		if pkgName != "" {
-			recursively.PackageName = pkgName
+		if pkgName == "" {
+			pkgName = fileNamePrefix + "_test"
 		}
+		recursively.PackageName = pkgName
 		if pkgPath != "" {
 			recursively.CurrentPackagePath = pkgPath
 		}
 
-		create, err := os.Create("cacik_test.go")
+		create, err := os.Create(outputFile)
 		if err != nil {
 			return err
 		}
@@ -69,17 +82,48 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 	return nil
 }
 
+// outputFileFromPrefix returns the generated test file name for a given prefix.
+// For example, "billing" -> "billing_test.go".
+func outputFileFromPrefix(prefix string) string {
+	if prefix == "" {
+		prefix = defaultFileNamePrefix
+	}
+	return prefix + "_test.go"
+}
+
+// testFuncNameFromPrefix returns the test function name for a given prefix.
+// Segments separated by underscores are title-cased and joined.
+// For example, "billing" -> "TestBilling", "my_feature" -> "TestMyFeature".
+func testFuncNameFromPrefix(prefix string) string {
+	if prefix == "" {
+		prefix = defaultFileNamePrefix
+	}
+	segments := strings.Split(prefix, "_")
+	var b strings.Builder
+	b.WriteString("Test")
+	for _, seg := range segments {
+		if seg == "" {
+			continue
+		}
+		runes := []rune(seg)
+		runes[0] = unicode.ToUpper(runes[0])
+		b.WriteString(string(runes))
+	}
+	return b.String()
+}
+
 // detectPackage detects the Go package name from Go files in the current
 // directory and the full import path by combining the module path from go.mod
-// with the relative directory.
-func detectPackage() (pkgName string, pkgPath string, err error) {
+// with the relative directory. The outputFile parameter is the name of the
+// generated test file so it can be skipped during package detection.
+func detectPackage(outputFile string) (pkgName string, pkgPath string, err error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", "", fmt.Errorf("cannot get working directory: %w", err)
 	}
 
 	// 1. Detect package name from Go files in CWD
-	pkgName, err = detectPackageName(cwd)
+	pkgName, err = detectPackageName(cwd, outputFile)
 	if err != nil {
 		return "", "", err
 	}
@@ -93,11 +137,12 @@ func detectPackage() (pkgName string, pkgPath string, err error) {
 	return pkgName, pkgPath, nil
 }
 
-// detectPackageName detects the Go package name for the given directory.
-// It first tries to read the package clause from existing Go files.
-// If no Go files exist, it falls back to deriving the name from the directory
-// path (or the module path for the module root).
-func detectPackageName(dir string) (string, error) {
+// detectPackageName detects the Go package name for the given directory by
+// reading the package clause from existing Go files. If no Go files provide
+// a package name, it returns "" so the caller can apply its own default.
+// The outputFile parameter is the name of the generated test file so it can
+// be skipped.
+func detectPackageName(dir string, outputFile string) (string, error) {
 	fset := token.NewFileSet()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -110,7 +155,7 @@ func detectPackageName(dir string) (string, error) {
 			continue
 		}
 		// Skip the files we generate
-		if name == "cacik_test.go" {
+		if name == outputFile {
 			continue
 		}
 
@@ -124,77 +169,7 @@ func detectPackageName(dir string) (string, error) {
 		}
 	}
 
-	// No Go files found — derive package name from directory or module path.
-	return packageNameFromDir(dir)
-}
-
-// packageNameFromDir derives a valid Go package name from the directory path.
-// At the module root it uses the last segment of the module path from go.mod.
-// Otherwise it uses the directory name, sanitising characters that are invalid
-// in Go identifiers (hyphens, dots, etc.).
-func packageNameFromDir(dir string) (string, error) {
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
-	}
-
-	// Try to use the module path when we're at the module root.
-	goModPath := filepath.Join(absDir, "go.mod")
-	if data, readErr := os.ReadFile(goModPath); readErr == nil {
-		modFile, parseErr := modfile.Parse(goModPath, data, nil)
-		if parseErr == nil && modFile.Module != nil {
-			base := filepath.Base(modFile.Module.Mod.Path)
-			if name := sanitizePackageName(base); name != "" {
-				return name, nil
-			}
-		}
-	}
-
-	// Fall back to the directory name.
-	base := filepath.Base(absDir)
-	if name := sanitizePackageName(base); name != "" {
-		return name, nil
-	}
-
-	return "", fmt.Errorf("cannot derive package name from directory %s", dir)
-}
-
-// sanitizePackageName turns a raw name (directory segment or module path
-// segment) into a valid Go package name. Invalid characters such as hyphens
-// and dots are replaced with underscores, and leading digits are prefixed
-// with an underscore.
-func sanitizePackageName(raw string) string {
-	if raw == "" || raw == "." || raw == "/" {
-		return ""
-	}
-
-	var b strings.Builder
-	for i, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			// Go package names are conventionally lowercase.
-			b.WriteRune(r - 'A' + 'a')
-		case r == '-' || r == '.':
-			if i == 0 {
-				continue // drop leading separator
-			}
-			b.WriteRune('_')
-		default:
-			// Drop other characters.
-		}
-	}
-
-	name := b.String()
-	if name == "" {
-		return ""
-	}
-	// A package name must not start with a digit.
-	if name[0] >= '0' && name[0] <= '9' {
-		name = "_" + name
-	}
-	return name
+	return "", nil
 }
 
 // detectImportPath walks up from dir looking for go.mod, then computes the
