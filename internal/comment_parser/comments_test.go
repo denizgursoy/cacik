@@ -151,6 +151,10 @@ func TestStepInt(t *testing.T) {
 
 	require.Equal(t, `^I have (\d+) apples$`, stepMap["IGetApples"])
 
+	// Verify IsExported is populated on step functions
+	require.Len(t, out.StepFunctions, 1)
+	require.True(t, out.StepFunctions[0].IsExported, "step function IGetApples should be marked as exported")
+
 	caps := assertAllStepsMatch(t, dir)
 	// "I have 5 apples" → ["5"], "I have 10 apples" → ["10"], etc.
 	require.Contains(t, caps["IGetApples"], []string{"5"})
@@ -660,8 +664,10 @@ func TestStepConfig(t *testing.T) {
 
 	require.Len(t, out.ConfigFunctions, 1)
 	require.Equal(t, "MyConfig", out.ConfigFunctions[0].FunctionName)
+	require.True(t, out.ConfigFunctions[0].IsExported, "config function should be marked as exported")
 	require.Len(t, out.HooksFunctions, 1)
 	require.Equal(t, "MyHooks", out.HooksFunctions[0].FunctionName)
+	require.True(t, out.HooksFunctions[0].IsExported, "hooks function should be marked as exported")
 
 	// No step functions expected in this directory
 	require.Empty(t, out.StepFunctions)

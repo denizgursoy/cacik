@@ -12,6 +12,7 @@ type (
 	FunctionLocator struct {
 		FullPackageName string
 		FunctionName    string
+		IsExported      bool // true when the function name starts with an uppercase letter
 	}
 
 	StepFunctionLocator struct {

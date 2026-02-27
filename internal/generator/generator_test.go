@@ -160,3 +160,123 @@ func TestOutputFileFromPrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateExportedFunctions(t *testing.T) {
+	t.Run("passes when all functions are exported", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/config", FunctionName: "GetConfig", IsExported: true},
+			},
+			HooksFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/hooks", FunctionName: "GetHooks", IsExported: true},
+			},
+			StepFunctions: []*StepFunctionLocator{
+				{StepName: "^step$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp/steps", FunctionName: "MyStep", IsExported: true}},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.NoError(t, err)
+	})
+
+	t.Run("allows unexported functions in same package", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp", FunctionName: "getConfig", IsExported: false},
+			},
+			HooksFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp", FunctionName: "getHooks", IsExported: false},
+			},
+			StepFunctions: []*StepFunctionLocator{
+				{StepName: "^step$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp", FunctionName: "myStep", IsExported: false}},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.NoError(t, err)
+	})
+
+	t.Run("returns error for unexported step function in different package", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			StepFunctions: []*StepFunctionLocator{
+				{StepName: "^step$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp/steps", FunctionName: "myStep", IsExported: false}},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "step function")
+		require.Contains(t, err.Error(), "myStep")
+		require.Contains(t, err.Error(), "not exported")
+	})
+
+	t.Run("returns error for unexported config function in different package", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/config", FunctionName: "getConfig", IsExported: false},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "config function")
+		require.Contains(t, err.Error(), "getConfig")
+		require.Contains(t, err.Error(), "not exported")
+	})
+
+	t.Run("returns error for unexported hooks function in different package", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			HooksFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/hooks", FunctionName: "getHooks", IsExported: false},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "hooks function")
+		require.Contains(t, err.Error(), "getHooks")
+		require.Contains(t, err.Error(), "not exported")
+	})
+
+	t.Run("reports multiple unexported functions in a single error", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			StepFunctions: []*StepFunctionLocator{
+				{StepName: "^step1$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp/steps", FunctionName: "stepOne", IsExported: false}},
+				{StepName: "^step2$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp/steps", FunctionName: "stepTwo", IsExported: false}},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "stepOne")
+		require.Contains(t, err.Error(), "stepTwo")
+	})
+
+	t.Run("passes with no functions", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+		}
+
+		err := validateExportedFunctions(output)
+		require.NoError(t, err)
+	})
+
+	t.Run("allows mix of exported cross-package and unexported same-package", func(t *testing.T) {
+		output := &Output{
+			CurrentPackagePath: "github.com/example/myapp",
+			StepFunctions: []*StepFunctionLocator{
+				{StepName: "^local$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/myapp", FunctionName: "localStep", IsExported: false}},
+				{StepName: "^remote$", FunctionLocator: &FunctionLocator{FullPackageName: "github.com/example/other", FunctionName: "RemoteStep", IsExported: true}},
+			},
+		}
+
+		err := validateExportedFunctions(output)
+		require.NoError(t, err)
+	})
+}

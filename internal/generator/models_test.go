@@ -13,12 +13,14 @@ var (
 			{
 				FullPackageName: "a",
 				FunctionName:    "ConfigFunction",
+				IsExported:      true,
 			},
 		},
 		HooksFunctions: []*FunctionLocator{
 			{
 				FullPackageName: "b",
 				FunctionName:    "HooksFunction",
+				IsExported:      true,
 			},
 		},
 		StepFunctions: []*StepFunctionLocator{
@@ -27,6 +29,7 @@ var (
 				FunctionLocator: &FunctionLocator{
 					FullPackageName: "package1",
 					FunctionName:    "Step1Function",
+					IsExported:      true,
 				},
 			},
 			{
@@ -34,6 +37,7 @@ var (
 				FunctionLocator: &FunctionLocator{
 					FullPackageName: "package2",
 					FunctionName:    "Step2Function",
+					IsExported:      true,
 				},
 			},
 		},
@@ -86,12 +90,14 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 				{
 					FullPackageName: "github.com/example/myapp/config",
 					FunctionName:    "ConfigFunction",
+					IsExported:      true,
 				},
 			},
 			HooksFunctions: []*FunctionLocator{
 				{
 					FullPackageName: "github.com/example/myapp/hooks",
 					FunctionName:    "HooksFunction",
+					IsExported:      true,
 				},
 			},
 			StepFunctions: []*StepFunctionLocator{
@@ -100,6 +106,7 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 					FunctionLocator: &FunctionLocator{
 						FullPackageName: "github.com/example/myapp/steps",
 						FunctionName:    "Step1Function",
+						IsExported:      true,
 					},
 				},
 			},
@@ -140,12 +147,14 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 				{
 					FullPackageName: "github.com/example/myapp", // same package
 					FunctionName:    "GetConfig",
+					IsExported:      true,
 				},
 			},
 			HooksFunctions: []*FunctionLocator{
 				{
 					FullPackageName: "github.com/example/myapp", // same package
 					FunctionName:    "GetHooks",
+					IsExported:      true,
 				},
 			},
 			StepFunctions: []*StepFunctionLocator{
@@ -154,6 +163,7 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 					FunctionLocator: &FunctionLocator{
 						FullPackageName: "github.com/example/myapp", // same package
 						FunctionName:    "LocalStep",
+						IsExported:      true,
 					},
 				},
 				{
@@ -161,6 +171,7 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 					FunctionLocator: &FunctionLocator{
 						FullPackageName: "github.com/example/other", // different package
 						FunctionName:    "ExternalStep",
+						IsExported:      true,
 					},
 				},
 			},
@@ -203,6 +214,7 @@ func TestOutput_Generate_CustomTestFuncName(t *testing.T) {
 					FunctionLocator: &FunctionLocator{
 						FullPackageName: "pkg",
 						FunctionName:    "Step1",
+						IsExported:      true,
 					},
 				},
 			},
@@ -227,6 +239,7 @@ func TestOutput_Generate_CustomTestFuncName(t *testing.T) {
 					FunctionLocator: &FunctionLocator{
 						FullPackageName: "pkg",
 						FunctionName:    "Step1",
+						IsExported:      true,
 					},
 				},
 			},

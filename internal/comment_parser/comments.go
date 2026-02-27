@@ -105,11 +105,13 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 						output.ConfigFunctions = append(output.ConfigFunctions, &generator.FunctionLocator{
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
+							IsExported:      ast.IsExported(decl.Name.Name),
 						})
 					} else if IsHooksFunction(decl, node.Imports) {
 						output.HooksFunctions = append(output.HooksFunctions, &generator.FunctionLocator{
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
+							IsExported:      ast.IsExported(decl.Name.Name),
 						})
 					} else if isStepFunction {
 						// Transform {param} syntax to regex
@@ -131,6 +133,7 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 							FunctionLocator: &generator.FunctionLocator{
 								FullPackageName: importPathOfFuncDecl,
 								FunctionName:    decl.Name.Name,
+								IsExported:      ast.IsExported(decl.Name.Name),
 							},
 						})
 					}

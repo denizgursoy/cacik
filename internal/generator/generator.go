@@ -67,6 +67,11 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 			recursively.CurrentPackagePath = pkgPath
 		}
 
+		// Validate that all cross-package functions are exported
+		if err := validateExportedFunctions(recursively); err != nil {
+			return err
+		}
+
 		create, err := os.Create(outputFile)
 		if err != nil {
 			return err
@@ -170,6 +175,44 @@ func detectPackageName(dir string, outputFile string) (string, error) {
 	}
 
 	return "", nil
+}
+
+// validateExportedFunctions checks that all discovered step, config, and hooks
+// functions that live in a different package from the generated test file are
+// exported (start with an uppercase letter). Unexported functions from other
+// packages would cause a compilation error in the generated code.
+// Functions in the same package as currentPackagePath are allowed to be unexported.
+func validateExportedFunctions(output *Output) error {
+	var items []string
+
+	checkLocator := func(fl *FunctionLocator, kind string) {
+		if fl.IsExported {
+			return
+		}
+		if output.isSamePackage(fl.FullPackageName) {
+			return
+		}
+		items = append(items, fmt.Sprintf(
+			"  - %s function %q in package %q",
+			kind, fl.FunctionName, fl.FullPackageName,
+		))
+	}
+
+	for _, cf := range output.ConfigFunctions {
+		checkLocator(cf, "config")
+	}
+	for _, hf := range output.HooksFunctions {
+		checkLocator(hf, "hooks")
+	}
+	for _, sf := range output.StepFunctions {
+		checkLocator(sf.FunctionLocator, "step")
+	}
+
+	if len(items) > 0 {
+		return fmt.Errorf("the following functions are not exported (functions must start with an uppercase letter to be accessible from the generated test file):\n%s",
+			strings.Join(items, "\n"))
+	}
+	return nil
 }
 
 // detectImportPath walks up from dir looking for go.mod, then computes the
