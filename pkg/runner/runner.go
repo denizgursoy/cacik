@@ -179,6 +179,11 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 		return nil
 	}
 
+	// Validate all step texts have matching definitions before running
+	if err := c.resolveAllSteps(scenarios); err != nil {
+		return err
+	}
+
 	// Create main reporter for summary aggregation
 	var mainReporter *cacik.ConsoleReporter
 	if disableReporter {
@@ -244,56 +249,56 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 			scenarioPassed := true
 
 			// Execute feature background
-			if scenario.FeatureBackground != nil {
+			if len(scenario.ResolvedFeatureBgSteps) > 0 {
 				reporter.BackgroundStart()
-				for i, step := range scenario.FeatureBackground.Steps {
-					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
+				for i, rs := range scenario.ResolvedFeatureBgSteps {
+					if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
 						scenarioPassed = false
 						scenarioErr = err
 						// Skip remaining background steps
-						for j := i + 1; j < len(scenario.FeatureBackground.Steps); j++ {
-							remainingStep := scenario.FeatureBackground.Steps[j]
-							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-							reportStepDataTable(reporter, remainingStep)
+						for j := i + 1; j < len(scenario.ResolvedFeatureBgSteps); j++ {
+							remaining := scenario.ResolvedFeatureBgSteps[j]
+							reporter.StepSkipped(remaining.Keyword, remaining.Text)
+							reportStepDataTable(reporter, remaining.DataTable)
 							reporter.AddStepResult(false, true)
 						}
 						// Skip scenario steps
 						reporter.ScenarioStart(scenario.Scenario.Name)
-						for _, s := range scenario.Scenario.Steps {
+						for _, s := range scenario.ResolvedScenarioSteps {
 							reporter.StepSkipped(s.Keyword, s.Text)
-							reportStepDataTable(reporter, s)
+							reportStepDataTable(reporter, s.DataTable)
 							reporter.AddStepResult(false, true)
 						}
 						reporter.AddScenarioResult(false)
-						st.Fatalf("feature background step %q failed: %v", step.Text, err)
+						st.Fatalf("feature background step %q failed: %v", rs.Text, err)
 						return
 					}
 				}
 			}
 
 			// Execute rule background
-			if scenario.RuleBackground != nil {
+			if len(scenario.ResolvedRuleBgSteps) > 0 {
 				reporter.BackgroundStart()
-				for i, step := range scenario.RuleBackground.Steps {
-					if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
+				for i, rs := range scenario.ResolvedRuleBgSteps {
+					if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
 						scenarioPassed = false
 						scenarioErr = err
 						// Skip remaining background steps
-						for j := i + 1; j < len(scenario.RuleBackground.Steps); j++ {
-							remainingStep := scenario.RuleBackground.Steps[j]
-							reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-							reportStepDataTable(reporter, remainingStep)
+						for j := i + 1; j < len(scenario.ResolvedRuleBgSteps); j++ {
+							remaining := scenario.ResolvedRuleBgSteps[j]
+							reporter.StepSkipped(remaining.Keyword, remaining.Text)
+							reportStepDataTable(reporter, remaining.DataTable)
 							reporter.AddStepResult(false, true)
 						}
 						// Skip scenario steps
 						reporter.ScenarioStart(scenario.Scenario.Name)
-						for _, s := range scenario.Scenario.Steps {
+						for _, s := range scenario.ResolvedScenarioSteps {
 							reporter.StepSkipped(s.Keyword, s.Text)
-							reportStepDataTable(reporter, s)
+							reportStepDataTable(reporter, s.DataTable)
 							reporter.AddStepResult(false, true)
 						}
 						reporter.AddScenarioResult(false)
-						st.Fatalf("rule background step %q failed: %v", step.Text, err)
+						st.Fatalf("rule background step %q failed: %v", rs.Text, err)
 						return
 					}
 				}
@@ -301,19 +306,19 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 
 			// Execute scenario steps
 			reporter.ScenarioStart(scenario.Scenario.Name)
-			for i, step := range scenario.Scenario.Steps {
-				if err := isolatedExec.ExecuteStepWithKeyword(step.Keyword, step.Text, step.DataTable); err != nil {
+			for i, rs := range scenario.ResolvedScenarioSteps {
+				if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
 					scenarioPassed = false
 					scenarioErr = err
 					// Skip remaining steps
-					for j := i + 1; j < len(scenario.Scenario.Steps); j++ {
-						remainingStep := scenario.Scenario.Steps[j]
-						reporter.StepSkipped(remainingStep.Keyword, remainingStep.Text)
-						reportStepDataTable(reporter, remainingStep)
+					for j := i + 1; j < len(scenario.ResolvedScenarioSteps); j++ {
+						remaining := scenario.ResolvedScenarioSteps[j]
+						reporter.StepSkipped(remaining.Keyword, remaining.Text)
+						reportStepDataTable(reporter, remaining.DataTable)
 						reporter.AddStepResult(false, true)
 					}
 					reporter.AddScenarioResult(false)
-					st.Fatalf("step %q failed: %v", step.Text, err)
+					st.Fatalf("step %q failed: %v", rs.Text, err)
 					return
 				}
 			}
@@ -507,6 +512,10 @@ type ScenarioExecution struct {
 	FeatureFile       string
 	FeatureName       string
 	RuleName          string
+	// Pre-resolved step matches (populated by resolveAllSteps before execution)
+	ResolvedFeatureBgSteps []*executor.ResolvedStep
+	ResolvedRuleBgSteps    []*executor.ResolvedStep
+	ResolvedScenarioSteps  []*executor.ResolvedStep
 }
 
 // documentWithFile pairs a parsed document with its source file path
@@ -606,6 +615,48 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 		}
 	}
 	return scenarios
+}
+
+// resolveAllSteps resolves every step in every scenario against the registered
+// step definitions. Each step's matching definition and captured arguments are
+// stored in the ResolvedStep fields of ScenarioExecution. Fails fast on the
+// first unmatched step.
+func (c *CucumberRunner) resolveAllSteps(scenarios []ScenarioExecution) error {
+	for i := range scenarios {
+		se := &scenarios[i]
+
+		if se.FeatureBackground != nil {
+			for _, step := range se.FeatureBackground.Steps {
+				rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
+				if err != nil {
+					return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
+						step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+				}
+				se.ResolvedFeatureBgSteps = append(se.ResolvedFeatureBgSteps, rs)
+			}
+		}
+
+		if se.RuleBackground != nil {
+			for _, step := range se.RuleBackground.Steps {
+				rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
+				if err != nil {
+					return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
+						step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+				}
+				se.ResolvedRuleBgSteps = append(se.ResolvedRuleBgSteps, rs)
+			}
+		}
+
+		for _, step := range se.Scenario.Steps {
+			rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
+			if err != nil {
+				return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
+					step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+			}
+			se.ResolvedScenarioSteps = append(se.ResolvedScenarioSteps, rs)
+		}
+	}
+	return nil
 }
 
 // expandScenarioOutline expands a Scenario Outline into concrete scenarios by
@@ -714,12 +765,12 @@ func substituteDataTable(dt *messages.DataTable, replacements map[string]string)
 }
 
 // reportStepDataTable prints a step's DataTable via the reporter, if present.
-func reportStepDataTable(reporter cacik.Reporter, step *messages.Step) {
-	if step.DataTable == nil {
+func reportStepDataTable(reporter cacik.Reporter, dt *messages.DataTable) {
+	if dt == nil {
 		return
 	}
-	rows := make([][]string, 0, len(step.DataTable.Rows))
-	for _, row := range step.DataTable.Rows {
+	rows := make([][]string, 0, len(dt.Rows))
+	for _, row := range dt.Rows {
 		cells := make([]string, 0, len(row.Cells))
 		for _, cell := range row.Cells {
 			cells = append(cells, cell.Value)

@@ -11,6 +11,7 @@ import (
 
 	messages "github.com/cucumber/messages/go/v21"
 	"github.com/denizgursoy/cacik/pkg/cacik"
+	"github.com/denizgursoy/cacik/pkg/executor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -910,4 +911,167 @@ func filterEvents(events []outlineEvent, step string) []outlineEvent {
 		}
 	}
 	return result
+}
+
+func Test_resolveAllSteps(t *testing.T) {
+	t.Run("resolves all steps when all match", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^a known step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name: "Test Scenario",
+					Steps: []*messages.Step{
+						{Keyword: "Given ", Text: "a known step"},
+					},
+				},
+				FeatureName: "Test Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.NoError(t, resolveErr)
+		require.Len(t, scenarios[0].ResolvedScenarioSteps, 1)
+		require.Equal(t, "a known step", scenarios[0].ResolvedScenarioSteps[0].Text)
+		require.Equal(t, "Given ", scenarios[0].ResolvedScenarioSteps[0].Keyword)
+	})
+
+	t.Run("fails fast on first unmatched step", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^a known step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name: "Test Scenario",
+					Steps: []*messages.Step{
+						{Keyword: "Given ", Text: "a known step"},
+						{Keyword: "When ", Text: "an unknown step"},
+					},
+				},
+				FeatureName: "Test Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.Error(t, resolveErr)
+		require.Contains(t, resolveErr.Error(), `"an unknown step"`)
+		require.Contains(t, resolveErr.Error(), "Feature: Test Feature")
+		require.Contains(t, resolveErr.Error(), "Scenario: Test Scenario")
+		require.Contains(t, resolveErr.Error(), "test.feature")
+	})
+
+	t.Run("resolves feature background steps", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^bg step$", func() {})
+		require.NoError(t, err)
+		err = exec.RegisterStep("^scenario step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name:  "Test Scenario",
+					Steps: []*messages.Step{{Keyword: "Then ", Text: "scenario step"}},
+				},
+				FeatureBackground: &messages.Background{
+					Steps: []*messages.Step{{Keyword: "Given ", Text: "bg step"}},
+				},
+				FeatureName: "Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.NoError(t, resolveErr)
+		require.Len(t, scenarios[0].ResolvedFeatureBgSteps, 1)
+		require.Equal(t, "bg step", scenarios[0].ResolvedFeatureBgSteps[0].Text)
+		require.Len(t, scenarios[0].ResolvedScenarioSteps, 1)
+	})
+
+	t.Run("fails fast on unmatched background step", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^scenario step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name:  "Test Scenario",
+					Steps: []*messages.Step{{Keyword: "Then ", Text: "scenario step"}},
+				},
+				FeatureBackground: &messages.Background{
+					Steps: []*messages.Step{{Keyword: "Given ", Text: "unmatched background step"}},
+				},
+				FeatureName: "Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.Error(t, resolveErr)
+		require.Contains(t, resolveErr.Error(), "unmatched background step")
+	})
+
+	t.Run("resolves rule background steps", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^rule bg step$", func() {})
+		require.NoError(t, err)
+		err = exec.RegisterStep("^scenario step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name:  "Test Scenario",
+					Steps: []*messages.Step{{Keyword: "Then ", Text: "scenario step"}},
+				},
+				RuleBackground: &messages.Background{
+					Steps: []*messages.Step{{Keyword: "Given ", Text: "rule bg step"}},
+				},
+				FeatureName: "Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.NoError(t, resolveErr)
+		require.Len(t, scenarios[0].ResolvedRuleBgSteps, 1)
+		require.Equal(t, "rule bg step", scenarios[0].ResolvedRuleBgSteps[0].Text)
+	})
+
+	t.Run("fails fast on unmatched rule background step", func(t *testing.T) {
+		exec := executor.NewStepExecutor()
+		err := exec.RegisterStep("^scenario step$", func() {})
+		require.NoError(t, err)
+
+		runner := NewCucumberRunnerWithExecutor(t, exec)
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name:  "Test Scenario",
+					Steps: []*messages.Step{{Keyword: "Then ", Text: "scenario step"}},
+				},
+				RuleBackground: &messages.Background{
+					Steps: []*messages.Step{{Keyword: "Given ", Text: "unmatched rule bg step"}},
+				},
+				FeatureName: "Feature",
+				FeatureFile: "test.feature",
+			},
+		}
+
+		resolveErr := runner.resolveAllSteps(scenarios)
+		require.Error(t, resolveErr)
+		require.Contains(t, resolveErr.Error(), "unmatched rule bg step")
+	})
 }

@@ -68,6 +68,19 @@ type StepDefinition struct {
 	Function any
 }
 
+// ResolvedStep holds a Gherkin step paired with its pre-resolved matching step
+// definition. Created by ResolveStep during the pre-run validation phase and
+// consumed by ExecuteResolvedStep during execution, avoiding redundant pattern
+// matching.
+type ResolvedStep struct {
+	Keyword   string              // Gherkin keyword (Given, When, Then, etc.)
+	Text      string              // Step text
+	DataTable *messages.DataTable // Optional DataTable
+	StepDef   StepDefinition      // The matched step definition
+	Args      []string            // Captured regex groups (full match excluded)
+	MatchLocs []int               // Byte positions of capture groups for reporter highlighting
+}
+
 // CustomTypeInfo holds runtime info for custom type validation
 type CustomTypeInfo struct {
 	Name          string            // Type name, e.g., "Color"
@@ -126,6 +139,90 @@ func (e *StepExecutor) Clone() *StepExecutor {
 		cacikCtx:     nil,            // Will be set per-scenario
 		hookExecutor: e.hookExecutor, // Share hook executor
 	}
+}
+
+// ResolveStep finds the first matching step definition for the given step text
+// and returns a ResolvedStep with the match results pre-computed. Returns an
+// error if no matching step definition is found.
+func (e *StepExecutor) ResolveStep(keyword, stepText string, dataTable *messages.DataTable) (*ResolvedStep, error) {
+	for _, stepDef := range e.steps {
+		matches := stepDef.Pattern.FindStringSubmatch(stepText)
+		if matches == nil {
+			continue
+		}
+		var matchLocs []int
+		if idxMatches := stepDef.Pattern.FindStringSubmatchIndex(stepText); len(idxMatches) > 2 {
+			matchLocs = idxMatches[2:]
+		}
+		return &ResolvedStep{
+			Keyword:   keyword,
+			Text:      stepText,
+			DataTable: dataTable,
+			StepDef:   stepDef,
+			Args:      matches[1:],
+			MatchLocs: matchLocs,
+		}, nil
+	}
+	return nil, fmt.Errorf("no matching step definition found for: %s", stepText)
+}
+
+// ExecuteResolvedStep executes a pre-resolved step without re-scanning patterns.
+// The ResolvedStep must have been created by ResolveStep.
+func (e *StepExecutor) ExecuteResolvedStep(rs *ResolvedStep) error {
+	cacikStep := cacik.Step{Keyword: rs.Keyword, Text: rs.Text}
+
+	// Execute BeforeStep hooks
+	if e.hookExecutor != nil {
+		e.hookExecutor.ExecuteBeforeStep(cacikStep)
+	}
+
+	// Execute step with panic recovery and runtime.Goexit detection
+	var stepErr error
+	var panicMsg string
+
+	var testingT cacik.T
+	if e.cacikCtx != nil {
+		testingT = e.cacikCtx.TestingT()
+	}
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				panicMsg = fmt.Sprintf("%v", r)
+				stepErr = fmt.Errorf("%v", r)
+			} else if testingT != nil && testingT.Failed() {
+				panicMsg = "assertion failed"
+				stepErr = fmt.Errorf("step assertion failed")
+			}
+		}()
+		stepErr = e.invokeStepFunction(rs.StepDef.Function, rs.Args, rs.DataTable)
+	}()
+
+	// Execute AfterStep hooks
+	if e.hookExecutor != nil {
+		e.hookExecutor.ExecuteAfterStep(cacikStep, stepErr)
+	}
+
+	// Report step result
+	if e.cacikCtx != nil {
+		reporter := e.cacikCtx.Reporter()
+		if stepErr != nil {
+			errMsg := panicMsg
+			if errMsg == "" && stepErr != nil {
+				errMsg = stepErr.Error()
+			}
+			reporter.StepFailed(rs.Keyword, rs.Text, errMsg, rs.MatchLocs)
+			reporter.AddStepResult(false, false)
+		} else {
+			reporter.StepPassed(rs.Keyword, rs.Text, rs.MatchLocs)
+			reporter.AddStepResult(true, false)
+		}
+		if rs.DataTable != nil {
+			reporter.StepDataTable(dataTableToRows(rs.DataTable))
+		}
+	}
+
+	return stepErr
 }
 
 // SetHookExecutor sets the hook executor for BeforeStep/AfterStep hooks

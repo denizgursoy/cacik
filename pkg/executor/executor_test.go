@@ -194,6 +194,117 @@ func TestStepExecutor_ExecuteStep(t *testing.T) {
 	})
 }
 
+func TestStepExecutor_ResolveStep(t *testing.T) {
+	t.Run("resolves matching step with captured args", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx *cacik.Context, n int) {})
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("Given ", "I have 5 apples", nil)
+		require.NoError(t, err)
+		require.NotNil(t, rs)
+		require.Equal(t, "Given ", rs.Keyword)
+		require.Equal(t, "I have 5 apples", rs.Text)
+		require.Equal(t, []string{"5"}, rs.Args)
+		require.NotEmpty(t, rs.MatchLocs)
+	})
+
+	t.Run("returns error for non-matching step", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^I have (\\d+) apples$", func(ctx *cacik.Context, n int) {})
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("Given ", "I have many oranges", nil)
+		require.Error(t, err)
+		require.Nil(t, rs)
+		require.Contains(t, err.Error(), "no matching step definition found for")
+	})
+
+	t.Run("returns error when no steps registered", func(t *testing.T) {
+		exec := NewStepExecutor()
+		rs, err := exec.ResolveStep("Given ", "any step text", nil)
+		require.Error(t, err)
+		require.Nil(t, rs)
+	})
+
+	t.Run("resolves against multiple patterns", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^step one$", func() {})
+		require.NoError(t, err)
+		err = exec.RegisterStep("^step two$", func() {})
+		require.NoError(t, err)
+
+		rs1, err := exec.ResolveStep("Given ", "step one", nil)
+		require.NoError(t, err)
+		require.Equal(t, "step one", rs1.Text)
+
+		rs2, err := exec.ResolveStep("When ", "step two", nil)
+		require.NoError(t, err)
+		require.Equal(t, "step two", rs2.Text)
+
+		_, err = exec.ResolveStep("Then ", "step three", nil)
+		require.Error(t, err)
+	})
+
+	t.Run("preserves DataTable in resolved step", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^a step$", func() {})
+		require.NoError(t, err)
+
+		dt := &messages.DataTable{
+			Rows: []*messages.TableRow{
+				{Cells: []*messages.TableCell{{Value: "a"}}},
+			},
+		}
+		rs, err := exec.ResolveStep("Given ", "a step", dt)
+		require.NoError(t, err)
+		require.Equal(t, dt, rs.DataTable)
+	})
+}
+
+func TestStepExecutor_ExecuteResolvedStep(t *testing.T) {
+	t.Run("executes function from pre-resolved step", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var called bool
+		err := exec.RegisterStep("^I do something$", func() { called = true })
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("When ", "I do something", nil)
+		require.NoError(t, err)
+
+		err = exec.ExecuteResolvedStep(rs)
+		require.NoError(t, err)
+		require.True(t, called)
+	})
+
+	t.Run("passes captured args to function", func(t *testing.T) {
+		exec := NewStepExecutor()
+		var received int
+		err := exec.RegisterStep("^I have (\\d+) items$", func(ctx *cacik.Context, n int) { received = n })
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("Given ", "I have 42 items", nil)
+		require.NoError(t, err)
+
+		err = exec.ExecuteResolvedStep(rs)
+		require.NoError(t, err)
+		require.Equal(t, 42, received)
+	})
+
+	t.Run("returns error from failing step function", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^a failing step$", func() error { return fmt.Errorf("step failed") })
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("When ", "a failing step", nil)
+		require.NoError(t, err)
+
+		err = exec.ExecuteResolvedStep(rs)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "step failed")
+	})
+}
+
 func TestStepExecutor_Execute_Background(t *testing.T) {
 	t.Run("executes background before scenario", func(t *testing.T) {
 		exec := NewStepExecutor()
