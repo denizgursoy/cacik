@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -30,27 +31,35 @@ type Logger interface {
 
 // Data provides scenario-scoped state management.
 // Use this to store and retrieve values across steps within a scenario.
+// All methods are safe for concurrent use by multiple goroutines.
 type Data struct {
+	mu     sync.RWMutex
 	t      T
 	values map[string]any
 }
 
 // Set stores a value in the scenario-scoped data store.
 func (d *Data) Set(key string, value any) {
+	d.mu.Lock()
 	d.values[key] = value
+	d.mu.Unlock()
 }
 
 // Get retrieves a value from the scenario-scoped data store.
 // Returns the value and a boolean indicating if the key was found.
 func (d *Data) Get(key string) (any, bool) {
+	d.mu.RLock()
 	v, ok := d.values[key]
+	d.mu.RUnlock()
 	return v, ok
 }
 
 // MustGet retrieves a value or fails the test if not found.
 func (d *Data) MustGet(key string) any {
 	d.t.Helper()
+	d.mu.RLock()
 	v, ok := d.values[key]
+	d.mu.RUnlock()
 	if !ok {
 		d.t.Errorf("key %q not found in context data", key)
 		d.t.FailNow()

@@ -593,7 +593,7 @@ func MyStep(ctx *cacik.Context) {
 
 ### State Management
 
-Store and retrieve values across steps within a scenario via `ctx.Data()`:
+Store and retrieve values across steps within a scenario via `ctx.Data()`. All `Data` methods are safe for concurrent use by multiple goroutines, so you can call `Set`, `Get`, and `MustGet` from goroutines spawned within a step without additional synchronization:
 
 ```go
 // @cacik `^I have {int} apples$`
@@ -806,7 +806,7 @@ func CheckValue(ctx *cacik.Context, expected int) {
 }
 ```
 
-Each scenario has its own `Data()` store, so there's no risk of race conditions or data leakage between scenarios.
+Each scenario has its own `Data()` store, so there's no risk of data leakage between scenarios. The `Data` store is also thread-safe — if a step spawns goroutines that read or write shared state, concurrent `Set`, `Get`, and `MustGet` calls are protected by an internal `sync.RWMutex`.
 
 ## Running with Tags
 

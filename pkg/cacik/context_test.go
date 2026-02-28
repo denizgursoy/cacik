@@ -3,6 +3,8 @@ package cacik
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -104,6 +106,98 @@ func TestData_SetGet(t *testing.T) {
 		require.Panics(t, func() {
 			ctx.Data().MustGet("missing")
 		})
+	})
+}
+
+func TestData_ConcurrentAccess(t *testing.T) {
+	t.Run("concurrent Set and Get do not race", func(t *testing.T) {
+		ctx := New()
+		const goroutines = 50
+		const iterations = 100
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines * 2) // writers + readers
+
+		// writers
+		for g := range goroutines {
+			go func(id int) {
+				defer wg.Done()
+				for i := range iterations {
+					ctx.Data().Set(fmt.Sprintf("key-%d-%d", id, i), i)
+				}
+			}(g)
+		}
+
+		// readers
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+				for range iterations {
+					ctx.Data().Get("key-0-0")
+				}
+			}()
+		}
+
+		wg.Wait()
+	})
+
+	t.Run("concurrent Set and MustGet do not race", func(t *testing.T) {
+		ctx := New(WithTestingT(t))
+		ctx.Data().Set("shared", 0)
+
+		const goroutines = 50
+		const iterations = 100
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines * 2)
+
+		// writers
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+				for i := range iterations {
+					ctx.Data().Set("shared", i)
+				}
+			}()
+		}
+
+		// readers
+		for range goroutines {
+			go func() {
+				defer wg.Done()
+				for range iterations {
+					ctx.Data().MustGet("shared")
+				}
+			}()
+		}
+
+		wg.Wait()
+	})
+
+	t.Run("values written concurrently are all retrievable", func(t *testing.T) {
+		ctx := New()
+		const goroutines = 100
+
+		var wg sync.WaitGroup
+		wg.Add(goroutines)
+
+		for g := range goroutines {
+			go func(id int) {
+				defer wg.Done()
+				key := fmt.Sprintf("g-%d", id)
+				ctx.Data().Set(key, id)
+			}(g)
+		}
+
+		wg.Wait()
+
+		// All values should be present
+		for g := range goroutines {
+			key := fmt.Sprintf("g-%d", g)
+			v, ok := ctx.Data().Get(key)
+			require.True(t, ok, "key %s should exist", key)
+			require.Equal(t, g, v, "key %s should have value %d", key, g)
+		}
 	})
 }
 
