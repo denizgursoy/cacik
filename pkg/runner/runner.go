@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
@@ -166,13 +167,17 @@ func (c *CucumberRunner) Run() error {
 		docs = append(docs, &documentWithFile{document: document, file: file})
 	}
 
-	return c.runWithTestingT(docs, failFast, useColors, disableReporter, c.hookExecutor)
+	reportFile := c.resolveReportFile()
+
+	return c.runWithTestingT(docs, failFast, useColors, disableReporter, reportFile, c.hookExecutor)
 }
 
 // runWithTestingT executes scenarios using t.Run() subtests.
 // Each scenario becomes a Go subtest and calls t.Parallel() so Go's test runner
 // controls concurrency (via go test -parallel N).
-func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool, useColors bool, disableReporter bool, hookExecutor *cacik.HookExecutor) error {
+func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool, useColors bool, disableReporter bool, reportFile string, hookExecutor *cacik.HookExecutor) error {
+	runStartedAt := time.Now()
+
 	// Collect all scenarios from filtered documents
 	scenarios := c.collectScenarios(docs)
 	if len(scenarios) == 0 {
@@ -192,143 +197,193 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 		mainReporter = cacik.NewConsoleReporter(useColors)
 	}
 
-	for _, scenario := range scenarios {
-		scenario := scenario // capture loop variable
-		testName := scenario.FeatureName + "/" + scenario.Scenario.Name
-		c.t.Run(testName, func(st *testing.T) {
-			st.Parallel()
+	// Wrap all parallel subtests in a barrier group so that the code after
+	// this t.Run returns only once every subtest has finished.  Without
+	// this, st.Parallel() causes t.Run to return immediately and the
+	// summary / HTML-report code would read uninitialised data.
+	c.t.Run("all", func(gt *testing.T) {
+		for idx := range scenarios {
+			scenario := &scenarios[idx] // pointer into original slice so writes propagate
+			testName := scenario.FeatureName + "/" + scenario.Scenario.Name
+			gt.Run(testName, func(st *testing.T) {
+				st.Parallel()
 
-			// Use buffered reporter per subtest to avoid interleaved output.
-			var reporter *cacik.ConsoleReporter
-			if disableReporter {
-				reporter = cacik.NewNoopConsoleReporter()
-			} else {
-				reporter = cacik.NewBufferedReporter(useColors)
-				defer func() {
-					reporter.Flush()
-					mainReporter.MergeSummary(reporter)
-				}()
-			}
+				// Record scenario timing
+				scenario.StartedAt = time.Now()
+				defer func() { scenario.Duration = time.Since(scenario.StartedAt) }()
 
-			// Always print feature header (each subtest has its own buffered reporter)
-			reporter.FeatureStart(scenario.FeatureName)
+				// Use buffered reporter per subtest to avoid interleaved output.
+				var reporter *cacik.ConsoleReporter
+				if disableReporter {
+					reporter = cacik.NewNoopConsoleReporter()
+				} else {
+					reporter = cacik.NewBufferedReporter(useColors)
+					defer reporter.Flush()
+				}
+				// Always merge summary into mainReporter (even when output is disabled,
+				// summary stats are still tracked and needed for RunResult/HTML report).
+				defer mainReporter.MergeSummary(reporter)
 
-			// Print rule header when the scenario belongs to a rule.
-			if scenario.RuleName != "" {
-				reporter.RuleStart(scenario.RuleName)
-			}
+				// Always print feature header (each subtest has its own buffered reporter)
+				reporter.FeatureStart(scenario.FeatureName)
 
-			// Create fresh context for this scenario with the subtest's *testing.T
-			opts := make([]cacik.Option, 0)
-			if c.logger != nil {
-				opts = append(opts, cacik.WithLogger(c.logger))
-			}
-			opts = append(opts, cacik.WithTestingT(st))
-			opts = append(opts, cacik.WithReporter(reporter))
-			ctx := cacik.New(opts...)
+				// Create fresh context for this scenario with the subtest's *testing.T
+				opts := make([]cacik.Option, 0)
+				if c.logger != nil {
+					opts = append(opts, cacik.WithLogger(c.logger))
+				}
+				opts = append(opts, cacik.WithTestingT(st))
+				opts = append(opts, cacik.WithReporter(reporter))
+				ctx := cacik.New(opts...)
 
-			// Clone executor and set context
-			isolatedExec := c.executor.Clone()
-			isolatedExec.SetCacikContext(ctx)
-			isolatedExec.SetHookExecutor(hookExecutor)
+				// Clone executor and set context
+				isolatedExec := c.executor.Clone()
+				isolatedExec.SetCacikContext(ctx)
+				isolatedExec.SetHookExecutor(hookExecutor)
 
-			cacikScenario := cacik.ScenarioFromMessage(scenario.Scenario)
-			var scenarioErr error
+				cacikScenario := cacik.ScenarioFromMessage(scenario.Scenario)
+				var scenarioErr error
 
-			// Execute BeforeScenario hooks
-			if hookExecutor != nil {
-				hookExecutor.ExecuteBeforeScenario(cacikScenario)
-			}
-			// Ensure AfterScenario hooks always run
-			defer func() {
+				// Execute BeforeScenario hooks
 				if hookExecutor != nil {
-					hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
+					hookExecutor.ExecuteBeforeScenario(cacikScenario)
 				}
-			}()
+				// Ensure AfterScenario hooks always run
+				defer func() {
+					if hookExecutor != nil {
+						hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
+					}
+				}()
 
-			scenarioPassed := true
+				scenarioPassed := true
 
-			// Execute feature background
-			if len(scenario.ResolvedFeatureBgSteps) > 0 {
-				reporter.BackgroundStart()
-				for i, rs := range scenario.ResolvedFeatureBgSteps {
+				// Execute feature background
+				if len(scenario.ResolvedFeatureBgSteps) > 0 {
+					reporter.BackgroundStart()
+					for i, rs := range scenario.ResolvedFeatureBgSteps {
+						if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
+							scenarioPassed = false
+							scenarioErr = err
+							scenario.Passed = false
+							scenario.Error = err.Error()
+							// Skip remaining background steps
+							for j := i + 1; j < len(scenario.ResolvedFeatureBgSteps); j++ {
+								remaining := scenario.ResolvedFeatureBgSteps[j]
+								remaining.Status = "skipped"
+								reporter.StepSkipped(remaining.Keyword, remaining.Text)
+								reportStepDataTable(reporter, remaining.DataTable)
+								reporter.AddStepResult(false, true)
+							}
+							// Print rule header and skip rule bg steps
+							if scenario.RuleName != "" {
+								reporter.RuleStart(scenario.RuleName)
+							}
+							for _, s := range scenario.ResolvedRuleBgSteps {
+								s.Status = "skipped"
+								reporter.StepSkipped(s.Keyword, s.Text)
+								reportStepDataTable(reporter, s.DataTable)
+								reporter.AddStepResult(false, true)
+							}
+							// Skip scenario steps
+							reporter.ScenarioStart(scenario.Scenario.Name)
+							for _, s := range scenario.ResolvedScenarioSteps {
+								s.Status = "skipped"
+								reporter.StepSkipped(s.Keyword, s.Text)
+								reportStepDataTable(reporter, s.DataTable)
+								reporter.AddStepResult(false, true)
+							}
+							reporter.AddScenarioResult(false)
+							st.Fatalf("feature background step %q failed: %v", rs.Text, err)
+							return
+						}
+					}
+				}
+
+				// Print rule header when the scenario belongs to a rule
+				// (after feature background, before rule background).
+				if scenario.RuleName != "" {
+					reporter.RuleStart(scenario.RuleName)
+				}
+
+				// Execute rule background
+				if len(scenario.ResolvedRuleBgSteps) > 0 {
+					reporter.BackgroundStart()
+					for i, rs := range scenario.ResolvedRuleBgSteps {
+						if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
+							scenarioPassed = false
+							scenarioErr = err
+							scenario.Passed = false
+							scenario.Error = err.Error()
+							// Skip remaining background steps
+							for j := i + 1; j < len(scenario.ResolvedRuleBgSteps); j++ {
+								remaining := scenario.ResolvedRuleBgSteps[j]
+								remaining.Status = "skipped"
+								reporter.StepSkipped(remaining.Keyword, remaining.Text)
+								reportStepDataTable(reporter, remaining.DataTable)
+								reporter.AddStepResult(false, true)
+							}
+							// Skip scenario steps
+							reporter.ScenarioStart(scenario.Scenario.Name)
+							for _, s := range scenario.ResolvedScenarioSteps {
+								s.Status = "skipped"
+								reporter.StepSkipped(s.Keyword, s.Text)
+								reportStepDataTable(reporter, s.DataTable)
+								reporter.AddStepResult(false, true)
+							}
+							reporter.AddScenarioResult(false)
+							st.Fatalf("rule background step %q failed: %v", rs.Text, err)
+							return
+						}
+					}
+				}
+
+				// Execute scenario steps
+				reporter.ScenarioStart(scenario.Scenario.Name)
+				for i, rs := range scenario.ResolvedScenarioSteps {
 					if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
 						scenarioPassed = false
 						scenarioErr = err
-						// Skip remaining background steps
-						for j := i + 1; j < len(scenario.ResolvedFeatureBgSteps); j++ {
-							remaining := scenario.ResolvedFeatureBgSteps[j]
+						scenario.Passed = false
+						scenario.Error = err.Error()
+						// Skip remaining steps
+						for j := i + 1; j < len(scenario.ResolvedScenarioSteps); j++ {
+							remaining := scenario.ResolvedScenarioSteps[j]
+							remaining.Status = "skipped"
 							reporter.StepSkipped(remaining.Keyword, remaining.Text)
 							reportStepDataTable(reporter, remaining.DataTable)
 							reporter.AddStepResult(false, true)
 						}
-						// Skip scenario steps
-						reporter.ScenarioStart(scenario.Scenario.Name)
-						for _, s := range scenario.ResolvedScenarioSteps {
-							reporter.StepSkipped(s.Keyword, s.Text)
-							reportStepDataTable(reporter, s.DataTable)
-							reporter.AddStepResult(false, true)
-						}
 						reporter.AddScenarioResult(false)
-						st.Fatalf("feature background step %q failed: %v", rs.Text, err)
+						st.Fatalf("step %q failed: %v", rs.Text, err)
 						return
 					}
 				}
-			}
 
-			// Execute rule background
-			if len(scenario.ResolvedRuleBgSteps) > 0 {
-				reporter.BackgroundStart()
-				for i, rs := range scenario.ResolvedRuleBgSteps {
-					if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
-						scenarioPassed = false
-						scenarioErr = err
-						// Skip remaining background steps
-						for j := i + 1; j < len(scenario.ResolvedRuleBgSteps); j++ {
-							remaining := scenario.ResolvedRuleBgSteps[j]
-							reporter.StepSkipped(remaining.Keyword, remaining.Text)
-							reportStepDataTable(reporter, remaining.DataTable)
-							reporter.AddStepResult(false, true)
-						}
-						// Skip scenario steps
-						reporter.ScenarioStart(scenario.Scenario.Name)
-						for _, s := range scenario.ResolvedScenarioSteps {
-							reporter.StepSkipped(s.Keyword, s.Text)
-							reportStepDataTable(reporter, s.DataTable)
-							reporter.AddStepResult(false, true)
-						}
-						reporter.AddScenarioResult(false)
-						st.Fatalf("rule background step %q failed: %v", rs.Text, err)
-						return
-					}
-				}
-			}
+				scenario.Passed = scenarioPassed
+				reporter.AddScenarioResult(scenarioPassed)
+			})
+		}
+	})
 
-			// Execute scenario steps
-			reporter.ScenarioStart(scenario.Scenario.Name)
-			for i, rs := range scenario.ResolvedScenarioSteps {
-				if err := isolatedExec.ExecuteResolvedStep(rs); err != nil {
-					scenarioPassed = false
-					scenarioErr = err
-					// Skip remaining steps
-					for j := i + 1; j < len(scenario.ResolvedScenarioSteps); j++ {
-						remaining := scenario.ResolvedScenarioSteps[j]
-						reporter.StepSkipped(remaining.Keyword, remaining.Text)
-						reportStepDataTable(reporter, remaining.DataTable)
-						reporter.AddStepResult(false, true)
-					}
-					reporter.AddScenarioResult(false)
-					st.Fatalf("step %q failed: %v", rs.Text, err)
-					return
-				}
-			}
-
-			reporter.AddScenarioResult(scenarioPassed)
-		})
-	}
+	// All parallel subtests have now completed (the "all" group acts as a barrier).
 
 	// Print summary after all subtests complete
 	mainReporter.PrintSummary()
+
+	// Build RunResult from scenario execution data
+	runResult := c.buildRunResult(scenarios, mainReporter, runStartedAt)
+
+	// Generate HTML report if configured
+	if reportFile != "" {
+		if err := cacik.GenerateHTMLReport(reportFile, runResult); err != nil {
+			return fmt.Errorf("failed to generate HTML report: %w", err)
+		}
+	}
+
+	// Call AfterRun callback if configured
+	if c.config != nil && c.config.AfterRun != nil {
+		c.config.AfterRun(runResult)
+	}
 
 	return nil
 }
@@ -516,6 +571,11 @@ type ScenarioExecution struct {
 	ResolvedFeatureBgSteps []*executor.ResolvedStep
 	ResolvedRuleBgSteps    []*executor.ResolvedStep
 	ResolvedScenarioSteps  []*executor.ResolvedStep
+	// Execution outcome (populated during runWithTestingT)
+	StartedAt time.Time
+	Duration  time.Duration
+	Passed    bool
+	Error     string
 }
 
 // documentWithFile pairs a parsed document with its source file path
@@ -566,6 +626,113 @@ func parseFailFastFromArgs() bool {
 		}
 	}
 	return false
+}
+
+// parseReportFileFromArgs extracts the report file path from command-line arguments.
+// Supports: --report-file path or --report-file=path
+func parseReportFileFromArgs() string {
+	args := os.Args[1:]
+	for i, arg := range args {
+		if arg == "--report-file" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(arg, "--report-file=") {
+			return strings.TrimPrefix(arg, "--report-file=")
+		}
+	}
+	return ""
+}
+
+// resolveReportFile resolves the report file path from config and CLI flags.
+// CLI flag --report-file overrides config value.
+// The value is treated as a file name without extension; ".html" is appended automatically.
+func (c *CucumberRunner) resolveReportFile() string {
+	var reportFile string
+	if c.config != nil && c.config.ReportFile != "" {
+		reportFile = c.config.ReportFile
+	}
+	if cliReport := parseReportFileFromArgs(); cliReport != "" {
+		reportFile = cliReport
+	}
+	if reportFile != "" {
+		reportFile = reportFile + ".html"
+	}
+	return reportFile
+}
+
+// buildRunResult converts internal ScenarioExecution data into a public RunResult.
+func (c *CucumberRunner) buildRunResult(scenarios []ScenarioExecution, reporter *cacik.ConsoleReporter, runStartedAt time.Time) cacik.RunResult {
+	scenarioResults := make([]cacik.ScenarioResult, 0, len(scenarios))
+
+	for i := range scenarios {
+		se := &scenarios[i]
+
+		// Collect steps by origin: feature bg, rule bg, scenario
+		var featureBgSteps []cacik.StepResult
+		for _, rs := range se.ResolvedFeatureBgSteps {
+			featureBgSteps = append(featureBgSteps, resolvedStepToResult(rs))
+		}
+		var ruleBgSteps []cacik.StepResult
+		for _, rs := range se.ResolvedRuleBgSteps {
+			ruleBgSteps = append(ruleBgSteps, resolvedStepToResult(rs))
+		}
+		var steps []cacik.StepResult
+		for _, rs := range se.ResolvedScenarioSteps {
+			steps = append(steps, resolvedStepToResult(rs))
+		}
+
+		// Extract tags
+		var tags []string
+		for _, tag := range se.Scenario.Tags {
+			tags = append(tags, tag.Name)
+		}
+
+		scenarioResults = append(scenarioResults, cacik.ScenarioResult{
+			FeatureName:    se.FeatureName,
+			RuleName:       se.RuleName,
+			Name:           se.Scenario.Name,
+			Tags:           tags,
+			Passed:         se.Passed,
+			Error:          se.Error,
+			Duration:       se.Duration,
+			StartedAt:      se.StartedAt,
+			FeatureBgSteps: featureBgSteps,
+			RuleBgSteps:    ruleBgSteps,
+			Steps:          steps,
+		})
+	}
+
+	return cacik.RunResult{
+		Scenarios: scenarioResults,
+		Summary:   reporter.GetSummary(),
+		Duration:  time.Since(runStartedAt),
+		StartedAt: runStartedAt,
+	}
+}
+
+// resolvedStepToResult maps an internal ResolvedStep to a public StepResult.
+func resolvedStepToResult(rs *executor.ResolvedStep) cacik.StepResult {
+	var status cacik.StepStatus
+	switch rs.Status {
+	case "passed":
+		status = cacik.StepPassed
+	case "failed":
+		status = cacik.StepFailed
+	case "skipped":
+		status = cacik.StepSkipped
+	default:
+		status = cacik.StepSkipped
+	}
+
+	return cacik.StepResult{
+		Keyword:   rs.Keyword,
+		Text:      rs.Text,
+		Status:    status,
+		Error:     rs.Error,
+		Duration:  rs.Duration,
+		StartedAt: rs.StartedAt,
+		MatchLocs: rs.MatchLocs,
+	}
 }
 
 // collectScenarios gathers all scenarios from documents with their backgrounds

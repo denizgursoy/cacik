@@ -901,11 +901,13 @@ import "github.com/denizgursoy/cacik/pkg/cacik"
 // MyConfig returns runtime configuration
 func MyConfig() *cacik.Config {
 	return &cacik.Config{
-		FailFast:        true,         // Stop on first failure
-		NoColor:         false,        // Colored output (default: true)
-		DisableLog:      false,        // Logger (ctx.Logger()) enabled (default: false)
-		DisableReporter: false,        // Reporter output enabled (default: false)
-		Logger:          customLogger, // Custom logger (default: slog)
+		FailFast:        true,              // Stop on first failure
+		NoColor:         false,             // Colored output (default: true)
+		DisableLog:      false,             // Logger (ctx.Logger()) enabled (default: false)
+		DisableReporter: false,             // Reporter output enabled (default: false)
+		Logger:          customLogger,      // Custom logger (default: slog)
+		ReportFile:      "report",         // Generate HTML report (produces report.html)
+		AfterRun:        myAfterRunHandler, // Callback after all scenarios finish
 	}
 }
 ```
@@ -919,8 +921,101 @@ func MyConfig() *cacik.Config {
 | `DisableLog` | `bool` | Disable the structured logger (`ctx.Logger()`) | `--disable-log` |
 | `DisableReporter` | `bool` | Disable reporter output (feature/scenario/step lines) | `--disable-reporter` |
 | `Logger` | `cacik.Logger` | Custom logger (default: slog to stdout) | - |
+| `ReportFile` | `string` | File name (without extension) for the HTML test report | `--report-file` |
+| `AfterRun` | `func(RunResult)` | Callback after all scenarios complete | - |
 
 Multiple config functions are merged (last wins for conflicts).
+
+## HTML Report
+
+Cacik can generate a self-contained HTML report after all scenarios complete. The report includes a summary dashboard, per-scenario results with collapsible step details, and step-level timing.
+
+### Via CLI Flag
+
+```shell
+go test -v -- --report-file report
+```
+
+The `--report-file` flag accepts a file name without extension; `.html` is appended automatically. Both `--report-file report` and `--report-file=report` forms are supported.
+
+### Via Config
+
+```go
+func MyConfig() *cacik.Config {
+	return &cacik.Config{
+		ReportFile: "test-results/report",
+	}
+}
+```
+
+The CLI flag always overrides the config value. The report is generated after all scenarios finish and before `AfterRun` is called.
+
+## AfterRun Callback
+
+Use `Config.AfterRun` to run custom logic after all scenarios complete. The callback receives a `RunResult` containing the complete run results — useful for custom reporting, sending notifications, or uploading results to external systems.
+
+```go
+func MyConfig() *cacik.Config {
+	return &cacik.Config{
+		AfterRun: func(result cacik.RunResult) {
+			fmt.Printf("Ran %d scenarios in %s\n", len(result.Scenarios), result.Duration)
+			for _, s := range result.Scenarios {
+				if !s.Passed {
+					fmt.Printf("  FAILED: %s — %s\n", s.Name, s.Error)
+				}
+			}
+		},
+	}
+}
+```
+
+The callback runs after the HTML report is generated (if configured) and before `Run()` returns.
+
+## Run Result Types
+
+After all scenarios execute, cacik builds a `RunResult` containing structured data about every scenario and step. This is passed to `AfterRun` and used by the HTML report generator.
+
+### RunResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Scenarios` | `[]ScenarioResult` | Result of every executed scenario |
+| `Summary` | `ReporterSummary` | Aggregate pass/fail/skip counters |
+| `Duration` | `time.Duration` | Total wall-clock time for the entire run |
+| `StartedAt` | `time.Time` | When the run started |
+
+### ScenarioResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `FeatureName` | `string` | Name of the parent feature |
+| `RuleName` | `string` | Name of the parent rule (empty if not inside a rule) |
+| `Name` | `string` | Scenario name from the .feature file |
+| `Tags` | `[]string` | Tags including inherited tags from Feature and Rule |
+| `Passed` | `bool` | True when all steps passed |
+| `Error` | `string` | Error message on failure (empty if passed) |
+| `Duration` | `time.Duration` | Wall-clock execution time |
+| `StartedAt` | `time.Time` | When the scenario started executing |
+| `Steps` | `[]StepResult` | Results of all steps in order (background steps first) |
+
+### StepResult
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Keyword` | `string` | Gherkin keyword with trailing space (e.g. `"Given "`, `"When "`) |
+| `Text` | `string` | Step text after the keyword |
+| `Status` | `StepStatus` | Execution outcome: `StepPassed`, `StepFailed`, or `StepSkipped` |
+| `Error` | `string` | Error message on failure (empty for passed/skipped) |
+| `Duration` | `time.Duration` | Wall-clock execution time (zero for skipped steps) |
+| `StartedAt` | `time.Time` | When the step started (zero for skipped steps) |
+
+### StepStatus
+
+| Constant | Value | String |
+|----------|-------|--------|
+| `StepPassed` | `0` | `"passed"` |
+| `StepFailed` | `1` | `"failed"` |
+| `StepSkipped` | `2` | `"skipped"` |
 
 ## Hooks
 

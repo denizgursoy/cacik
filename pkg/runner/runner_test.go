@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	tagexpressions "github.com/cucumber/tag-expressions/go/v6"
 
@@ -1073,5 +1074,424 @@ func Test_resolveAllSteps(t *testing.T) {
 		resolveErr := runner.resolveAllSteps(scenarios)
 		require.Error(t, resolveErr)
 		require.Contains(t, resolveErr.Error(), "unmatched rule bg step")
+	})
+}
+
+// =============================================================================
+// parseReportFileFromArgs Tests
+// =============================================================================
+
+func Test_parseReportFileFromArgs(t *testing.T) {
+	t.Run("parses --report-file with space", func(t *testing.T) {
+		withArgs([]string{"cmd", "--report-file", "report"}, func() {
+			result := parseReportFileFromArgs()
+			require.Equal(t, "report", result)
+		})
+	})
+
+	t.Run("parses --report-file= format", func(t *testing.T) {
+		withArgs([]string{"cmd", "--report-file=output/report"}, func() {
+			result := parseReportFileFromArgs()
+			require.Equal(t, "output/report", result)
+		})
+	})
+
+	t.Run("returns empty string when not present", func(t *testing.T) {
+		withArgs([]string{"cmd"}, func() {
+			result := parseReportFileFromArgs()
+			require.Equal(t, "", result)
+		})
+	})
+
+	t.Run("returns empty when flag is last arg with no value", func(t *testing.T) {
+		withArgs([]string{"cmd", "--report-file"}, func() {
+			result := parseReportFileFromArgs()
+			require.Equal(t, "", result)
+		})
+	})
+}
+
+// =============================================================================
+// resolveReportFile Tests
+// =============================================================================
+
+func Test_resolveReportFile(t *testing.T) {
+	t.Run("returns empty when no config and no CLI flag", func(t *testing.T) {
+		runner := NewCucumberRunner(t)
+		withArgs([]string{"cmd"}, func() {
+			result := runner.resolveReportFile()
+			require.Equal(t, "", result)
+		})
+	})
+
+	t.Run("returns config value with .html appended", func(t *testing.T) {
+		runner := NewCucumberRunner(t).WithConfig(&cacik.Config{
+			ReportFile: "config-report",
+		})
+		withArgs([]string{"cmd"}, func() {
+			result := runner.resolveReportFile()
+			require.Equal(t, "config-report.html", result)
+		})
+	})
+
+	t.Run("CLI flag overrides config with .html appended", func(t *testing.T) {
+		runner := NewCucumberRunner(t).WithConfig(&cacik.Config{
+			ReportFile: "config-report",
+		})
+		withArgs([]string{"cmd", "--report-file", "cli-report"}, func() {
+			result := runner.resolveReportFile()
+			require.Equal(t, "cli-report.html", result)
+		})
+	})
+}
+
+// =============================================================================
+// resolvedStepToResult Tests
+// =============================================================================
+
+func Test_resolvedStepToResult(t *testing.T) {
+	t.Run("maps passed step", func(t *testing.T) {
+		rs := &executor.ResolvedStep{
+			Keyword: "Given ",
+			Text:    "a step",
+			Status:  "passed",
+			Error:   "",
+		}
+		result := resolvedStepToResult(rs)
+		require.Equal(t, cacik.StepPassed, result.Status)
+		require.Equal(t, "Given ", result.Keyword)
+		require.Equal(t, "a step", result.Text)
+		require.Empty(t, result.Error)
+	})
+
+	t.Run("maps failed step", func(t *testing.T) {
+		rs := &executor.ResolvedStep{
+			Keyword: "When ",
+			Text:    "something fails",
+			Status:  "failed",
+			Error:   "oops",
+		}
+		result := resolvedStepToResult(rs)
+		require.Equal(t, cacik.StepFailed, result.Status)
+		require.Equal(t, "oops", result.Error)
+	})
+
+	t.Run("maps skipped step", func(t *testing.T) {
+		rs := &executor.ResolvedStep{
+			Keyword: "Then ",
+			Text:    "skipped",
+			Status:  "skipped",
+		}
+		result := resolvedStepToResult(rs)
+		require.Equal(t, cacik.StepSkipped, result.Status)
+	})
+
+	t.Run("maps unknown status to skipped", func(t *testing.T) {
+		rs := &executor.ResolvedStep{
+			Keyword: "And ",
+			Text:    "unknown",
+			Status:  "",
+		}
+		result := resolvedStepToResult(rs)
+		require.Equal(t, cacik.StepSkipped, result.Status)
+	})
+}
+
+// =============================================================================
+// buildRunResult Tests
+// =============================================================================
+
+func Test_buildRunResult(t *testing.T) {
+	t.Run("builds result from scenario executions", func(t *testing.T) {
+		reporter := cacik.NewNoopConsoleReporter()
+		reporter.AddScenarioResult(true)
+		reporter.AddScenarioResult(false)
+		reporter.AddStepResult(true, false)
+		reporter.AddStepResult(false, false)
+		reporter.AddStepResult(false, true)
+
+		scenarios := []ScenarioExecution{
+			{
+				Scenario: &messages.Scenario{
+					Name: "Passing scenario",
+					Tags: []*messages.Tag{{Name: "@smoke"}},
+				},
+				FeatureName: "Feature A",
+				RuleName:    "",
+				Passed:      true,
+				ResolvedScenarioSteps: []*executor.ResolvedStep{
+					{Keyword: "Given ", Text: "step one", Status: "passed"},
+				},
+			},
+			{
+				Scenario: &messages.Scenario{
+					Name: "Failing scenario",
+					Tags: []*messages.Tag{{Name: "@regression"}},
+				},
+				FeatureName: "Feature A",
+				RuleName:    "Rule X",
+				Passed:      false,
+				Error:       "step two failed",
+				ResolvedScenarioSteps: []*executor.ResolvedStep{
+					{Keyword: "When ", Text: "step two", Status: "failed", Error: "step two failed"},
+					{Keyword: "Then ", Text: "step three", Status: "skipped"},
+				},
+			},
+		}
+
+		runner := NewCucumberRunner(t)
+		runStartedAt := time.Now()
+		result := runner.buildRunResult(scenarios, reporter, runStartedAt)
+
+		require.Len(t, result.Scenarios, 2)
+
+		// First scenario
+		require.Equal(t, "Passing scenario", result.Scenarios[0].Name)
+		require.Equal(t, "Feature A", result.Scenarios[0].FeatureName)
+		require.Empty(t, result.Scenarios[0].RuleName)
+		require.True(t, result.Scenarios[0].Passed)
+		require.Len(t, result.Scenarios[0].Steps, 1)
+		require.Equal(t, cacik.StepPassed, result.Scenarios[0].Steps[0].Status)
+		require.Equal(t, []string{"@smoke"}, result.Scenarios[0].Tags)
+
+		// Second scenario
+		require.Equal(t, "Failing scenario", result.Scenarios[1].Name)
+		require.Equal(t, "Rule X", result.Scenarios[1].RuleName)
+		require.False(t, result.Scenarios[1].Passed)
+		require.Equal(t, "step two failed", result.Scenarios[1].Error)
+		require.Len(t, result.Scenarios[1].Steps, 2)
+		require.Equal(t, cacik.StepFailed, result.Scenarios[1].Steps[0].Status)
+		require.Equal(t, cacik.StepSkipped, result.Scenarios[1].Steps[1].Status)
+		require.Equal(t, []string{"@regression"}, result.Scenarios[1].Tags)
+
+		// Summary
+		require.Equal(t, 2, result.Summary.ScenariosTotal)
+		require.Equal(t, 1, result.Summary.ScenariosPassed)
+		require.Equal(t, 1, result.Summary.ScenariosFailed)
+
+		// Duration and StartedAt
+		require.Equal(t, runStartedAt, result.StartedAt)
+		require.Greater(t, result.Duration, time.Duration(0), "RunResult.Duration should be > 0")
+	})
+
+	t.Run("includes background steps in order", func(t *testing.T) {
+		reporter := cacik.NewNoopConsoleReporter()
+
+		scenarios := []ScenarioExecution{
+			{
+				Scenario:    &messages.Scenario{Name: "With backgrounds"},
+				FeatureName: "Feature",
+				Passed:      true,
+				ResolvedFeatureBgSteps: []*executor.ResolvedStep{
+					{Keyword: "Given ", Text: "feature bg", Status: "passed"},
+				},
+				ResolvedRuleBgSteps: []*executor.ResolvedStep{
+					{Keyword: "Given ", Text: "rule bg", Status: "passed"},
+				},
+				ResolvedScenarioSteps: []*executor.ResolvedStep{
+					{Keyword: "Then ", Text: "scenario step", Status: "passed"},
+				},
+			},
+		}
+
+		runner := NewCucumberRunner(t)
+		result := runner.buildRunResult(scenarios, reporter, time.Now())
+
+		require.Len(t, result.Scenarios[0].FeatureBgSteps, 1)
+		require.Equal(t, "feature bg", result.Scenarios[0].FeatureBgSteps[0].Text)
+		require.Len(t, result.Scenarios[0].RuleBgSteps, 1)
+		require.Equal(t, "rule bg", result.Scenarios[0].RuleBgSteps[0].Text)
+		require.Len(t, result.Scenarios[0].Steps, 1)
+		require.Equal(t, "scenario step", result.Scenarios[0].Steps[0].Text)
+	})
+}
+
+// =============================================================================
+// AfterRun Callback Integration Test
+// =============================================================================
+
+func TestCucumberRunner_AfterRunCallback(t *testing.T) {
+	t.Run("calls AfterRun with RunResult after all scenarios complete", func(t *testing.T) {
+		var mu sync.Mutex
+		var capturedResult *cacik.RunResult
+
+		dir := t.TempDir()
+		err := os.WriteFile(filepath.Join(dir, "test.feature"), []byte(`Feature: AfterRun test
+  Scenario: Passing
+    Given a passing step
+`), 0644)
+		require.NoError(t, err)
+
+		runner := NewCucumberRunner(t).
+			WithFeaturesDirectories(dir).
+			WithConfig(&cacik.Config{
+				DisableReporter: true,
+				AfterRun: func(result cacik.RunResult) {
+					mu.Lock()
+					capturedResult = &result
+					mu.Unlock()
+				},
+			}).
+			RegisterStep(`^a passing step$`, func(ctx *cacik.Context) {})
+
+		withArgs([]string{"cmd"}, func() {
+			runErr := runner.Run()
+			require.NoError(t, runErr)
+		})
+
+		// AfterRun is called synchronously after all subtests, so it should be set
+		// by the time Run() returns
+		mu.Lock()
+		defer mu.Unlock()
+		require.NotNil(t, capturedResult, "AfterRun callback should have been called")
+		require.Len(t, capturedResult.Scenarios, 1)
+		require.Equal(t, "Passing", capturedResult.Scenarios[0].Name)
+		require.Equal(t, "AfterRun test", capturedResult.Scenarios[0].FeatureName)
+	})
+}
+
+// =============================================================================
+// HTML Report Integration Test
+// =============================================================================
+
+func TestCucumberRunner_HTMLReportGeneration(t *testing.T) {
+	t.Run("generates HTML report via config", func(t *testing.T) {
+		dir := t.TempDir()
+		reportName := filepath.Join(dir, "report")
+		reportPath := reportName + ".html"
+
+		featureDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(featureDir, "test.feature"), []byte(`Feature: HTML test
+  Scenario: A scenario
+    Given a step
+`), 0644)
+		require.NoError(t, err)
+
+		runner := NewCucumberRunner(t).
+			WithFeaturesDirectories(featureDir).
+			WithConfig(&cacik.Config{
+				DisableReporter: true,
+				ReportFile:      reportName,
+			}).
+			RegisterStep(`^a step$`, func(ctx *cacik.Context) {})
+
+		withArgs([]string{"cmd"}, func() {
+			runErr := runner.Run()
+			require.NoError(t, runErr)
+		})
+
+		_, statErr := os.Stat(reportPath)
+		require.NoError(t, statErr, "HTML report file should exist")
+
+		data, readErr := os.ReadFile(reportPath)
+		require.NoError(t, readErr)
+		require.Contains(t, string(data), "HTML test")
+		require.Contains(t, string(data), "A scenario")
+	})
+
+	t.Run("generates HTML report with multiple scenarios", func(t *testing.T) {
+		dir := t.TempDir()
+		reportName := filepath.Join(dir, "multi-report")
+		reportPath := reportName + ".html"
+
+		featureDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(featureDir, "test.feature"), []byte(`Feature: Multi scenario
+  Scenario: First
+    Given step one
+
+  Scenario: Second
+    Given step two
+    Then step three
+`), 0644)
+		require.NoError(t, err)
+
+		var mu sync.Mutex
+		var capturedResult *cacik.RunResult
+
+		runner := NewCucumberRunner(t).
+			WithFeaturesDirectories(featureDir).
+			WithConfig(&cacik.Config{
+				DisableReporter: true,
+				ReportFile:      reportName,
+				AfterRun: func(result cacik.RunResult) {
+					mu.Lock()
+					capturedResult = &result
+					mu.Unlock()
+				},
+			}).
+			RegisterStep(`^step one$`, func(ctx *cacik.Context) {}).
+			RegisterStep(`^step two$`, func(ctx *cacik.Context) {}).
+			RegisterStep(`^step three$`, func(ctx *cacik.Context) {})
+
+		withArgs([]string{"cmd"}, func() {
+			runErr := runner.Run()
+			require.NoError(t, runErr)
+		})
+
+		// Verify report file
+		data, readErr := os.ReadFile(reportPath)
+		require.NoError(t, readErr)
+		html := string(data)
+		require.Contains(t, html, "Multi scenario")
+		require.Contains(t, html, "First")
+		require.Contains(t, html, "Second")
+		require.Contains(t, html, "step one")
+		require.Contains(t, html, "step two")
+		require.Contains(t, html, "step three")
+
+		// Verify AfterRun received results
+		mu.Lock()
+		defer mu.Unlock()
+		require.NotNil(t, capturedResult)
+		require.Equal(t, 2, len(capturedResult.Scenarios))
+	})
+
+	t.Run("generates HTML report with rule labels", func(t *testing.T) {
+		dir := t.TempDir()
+		reportName := filepath.Join(dir, "rule-report")
+		reportPath := reportName + ".html"
+
+		featureDir := t.TempDir()
+		err := os.WriteFile(filepath.Join(featureDir, "rule.feature"), []byte(`Feature: User management
+  Background:
+    Given the system is initialized
+  Rule: Registration
+    Background:
+      Given the registration form is loaded
+    Scenario: Successful registration
+      When the user registers with "alice@example.com"
+      Then the registration should succeed
+`), 0644)
+		require.NoError(t, err)
+
+		runner := NewCucumberRunner(t).
+			WithFeaturesDirectories(featureDir).
+			WithConfig(&cacik.Config{
+				DisableReporter: true,
+				ReportFile:      reportName,
+			}).
+			RegisterStep(`^the system is initialized$`, func(ctx *cacik.Context) {}).
+			RegisterStep(`^the registration form is loaded$`, func(ctx *cacik.Context) {}).
+			RegisterStep(`^the user registers with "([^"]*)"$`, func(ctx *cacik.Context, email string) {}).
+			RegisterStep(`^the registration should succeed$`, func(ctx *cacik.Context) {})
+
+		withArgs([]string{"cmd"}, func() {
+			runErr := runner.Run()
+			require.NoError(t, runErr)
+		})
+
+		data, readErr := os.ReadFile(reportPath)
+		require.NoError(t, readErr)
+		html := string(data)
+
+		// Rule label should appear in the scenario header breadcrumb
+		require.Contains(t, html, "Registration", "HTML report should contain the rule name")
+		// Rule label should appear in the step detail area
+		require.Contains(t, html, "Rule:", "HTML report should contain Rule: label in step area")
+		// Background labels should appear
+		require.Contains(t, html, "Background:", "HTML report should contain Background: labels")
+		// Feature name and scenario name
+		require.Contains(t, html, "User management")
+		require.Contains(t, html, "Successful registration")
 	})
 }

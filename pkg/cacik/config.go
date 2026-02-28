@@ -23,6 +23,18 @@ type Config struct {
 
 	// Logger sets a custom logger. If nil, default slog logger is used.
 	Logger Logger
+
+	// ReportFile is the file name (without extension) for the HTML test report.
+	// When set, an HTML report is generated after all scenarios complete.
+	// The ".html" extension is appended automatically.
+	// CLI flag --report-file overrides this value.
+	ReportFile string
+
+	// AfterRun is called after all scenarios have executed.
+	// Receives the complete run results for custom reporting.
+	// This callback runs after the HTML report is generated (if configured)
+	// and before Run() returns.
+	AfterRun func(result RunResult)
 }
 
 // MergeConfigs combines multiple configs into one.
@@ -49,6 +61,12 @@ func MergeConfigs(configs ...*Config) *Config {
 		}
 		if cfg.Logger != nil {
 			result.Logger = cfg.Logger
+		}
+		if cfg.ReportFile != "" {
+			result.ReportFile = cfg.ReportFile
+		}
+		if cfg.AfterRun != nil {
+			result.AfterRun = cfg.AfterRun
 		}
 	}
 

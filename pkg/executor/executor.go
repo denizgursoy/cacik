@@ -79,6 +79,13 @@ type ResolvedStep struct {
 	StepDef   StepDefinition      // The matched step definition
 	Args      []string            // Captured regex groups (full match excluded)
 	MatchLocs []int               // Byte positions of capture groups for reporter highlighting
+
+	// Execution outcome fields — populated by ExecuteResolvedStep or by the
+	// runner for skipped steps.
+	StartedAt time.Time     // When step execution started (zero if skipped)
+	Duration  time.Duration // Step execution duration (zero if skipped)
+	Status    string        // "passed", "failed", or "skipped"
+	Error     string        // Error message (empty if passed/skipped)
 }
 
 // CustomTypeInfo holds runtime info for custom type validation
@@ -176,6 +183,9 @@ func (e *StepExecutor) ExecuteResolvedStep(rs *ResolvedStep) error {
 		e.hookExecutor.ExecuteBeforeStep(cacikStep)
 	}
 
+	// Record start time
+	rs.StartedAt = time.Now()
+
 	// Execute step with panic recovery and runtime.Goexit detection
 	var stepErr error
 	var panicMsg string
@@ -198,6 +208,20 @@ func (e *StepExecutor) ExecuteResolvedStep(rs *ResolvedStep) error {
 		stepErr = e.invokeStepFunction(rs.StepDef.Function, rs.Args, rs.DataTable)
 	}()
 
+	// Record duration
+	rs.Duration = time.Since(rs.StartedAt)
+
+	// Set outcome on ResolvedStep
+	if stepErr != nil {
+		rs.Status = "failed"
+		rs.Error = panicMsg
+		if rs.Error == "" {
+			rs.Error = stepErr.Error()
+		}
+	} else {
+		rs.Status = "passed"
+	}
+
 	// Execute AfterStep hooks
 	if e.hookExecutor != nil {
 		e.hookExecutor.ExecuteAfterStep(cacikStep, stepErr)
@@ -207,11 +231,7 @@ func (e *StepExecutor) ExecuteResolvedStep(rs *ResolvedStep) error {
 	if e.cacikCtx != nil {
 		reporter := e.cacikCtx.Reporter()
 		if stepErr != nil {
-			errMsg := panicMsg
-			if errMsg == "" && stepErr != nil {
-				errMsg = stepErr.Error()
-			}
-			reporter.StepFailed(rs.Keyword, rs.Text, errMsg, rs.MatchLocs)
+			reporter.StepFailed(rs.Keyword, rs.Text, rs.Error, rs.MatchLocs)
 			reporter.AddStepResult(false, false)
 		} else {
 			reporter.StepPassed(rs.Keyword, rs.Text, rs.MatchLocs)

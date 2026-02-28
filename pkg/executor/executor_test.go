@@ -303,6 +303,64 @@ func TestStepExecutor_ExecuteResolvedStep(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "step failed")
 	})
+
+	t.Run("sets timing and status on passed step", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^a passing step$", func() {
+			time.Sleep(time.Millisecond)
+		})
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("Given ", "a passing step", nil)
+		require.NoError(t, err)
+
+		before := time.Now()
+		err = exec.ExecuteResolvedStep(rs)
+		require.NoError(t, err)
+
+		require.False(t, rs.StartedAt.IsZero(), "StartedAt should be set")
+		require.True(t, !rs.StartedAt.Before(before), "StartedAt should be >= test start")
+		require.True(t, rs.Duration > 0, "Duration should be positive")
+		require.Equal(t, "passed", rs.Status)
+		require.Empty(t, rs.Error)
+	})
+
+	t.Run("sets timing and status on failed step", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^a broken step$", func() error {
+			return fmt.Errorf("something broke")
+		})
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("When ", "a broken step", nil)
+		require.NoError(t, err)
+
+		err = exec.ExecuteResolvedStep(rs)
+		require.Error(t, err)
+
+		require.False(t, rs.StartedAt.IsZero(), "StartedAt should be set")
+		require.True(t, rs.Duration > 0, "Duration should be positive")
+		require.Equal(t, "failed", rs.Status)
+		require.Equal(t, "something broke", rs.Error)
+	})
+
+	t.Run("sets error from panic", func(t *testing.T) {
+		exec := NewStepExecutor()
+		err := exec.RegisterStep("^a panicking step$", func() {
+			panic("boom")
+		})
+		require.NoError(t, err)
+
+		rs, err := exec.ResolveStep("When ", "a panicking step", nil)
+		require.NoError(t, err)
+
+		err = exec.ExecuteResolvedStep(rs)
+		require.Error(t, err)
+
+		require.Equal(t, "failed", rs.Status)
+		require.Equal(t, "boom", rs.Error)
+		require.True(t, rs.Duration > 0, "Duration should be positive")
+	})
 }
 
 func TestStepExecutor_Execute_Background(t *testing.T) {
