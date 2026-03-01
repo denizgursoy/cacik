@@ -675,4 +675,133 @@ func TestBuildReportData(t *testing.T) {
 		require.Equal(t, "Untagged", groups[1].TagLabel)
 		require.Len(t, groups[1].Scenarios, 1)
 	})
+
+	t.Run("populates AllTags with unique sorted individual tags", func(t *testing.T) {
+		result := RunResult{
+			Scenarios: []ScenarioResult{
+				{Name: "S1", Passed: true, Tags: []string{"@smoke", "@api"}},
+				{Name: "S2", Passed: true, Tags: []string{"@smoke"}},
+				{Name: "S3", Passed: true, Tags: []string{"@billing"}},
+				{Name: "S4", Passed: true}, // untagged
+			},
+		}
+
+		data := buildReportData(result)
+		require.Equal(t, []string{"@api", "@billing", "@smoke"}, data.AllTags)
+		require.True(t, data.HasUntagged)
+	})
+
+	t.Run("AllTags is empty and HasUntagged false when no scenarios", func(t *testing.T) {
+		data := buildReportData(RunResult{})
+		require.Empty(t, data.AllTags)
+		require.False(t, data.HasUntagged)
+	})
+
+	t.Run("HasUntagged is false when all scenarios have tags", func(t *testing.T) {
+		result := RunResult{
+			Scenarios: []ScenarioResult{
+				{Name: "S1", Passed: true, Tags: []string{"@smoke"}},
+				{Name: "S2", Passed: true, Tags: []string{"@api"}},
+			},
+		}
+
+		data := buildReportData(result)
+		require.Equal(t, []string{"@api", "@smoke"}, data.AllTags)
+		require.False(t, data.HasUntagged)
+	})
+}
+
+func TestGenerateHTMLReport_TagFilter(t *testing.T) {
+	t.Run("renders filter bar with tag buttons and data-tags attribute", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "report.html")
+
+		result := RunResult{
+			Summary: ReporterSummary{ScenariosTotal: 3, ScenariosPassed: 3},
+			Scenarios: []ScenarioResult{
+				{FeatureName: "F", Name: "S1", Passed: true, Tags: []string{"@smoke", "@api"}, Duration: 100 * time.Millisecond},
+				{FeatureName: "F", Name: "S2", Passed: true, Tags: []string{"@billing"}, Duration: 50 * time.Millisecond},
+				{FeatureName: "F", Name: "S3", Passed: true, Duration: 60 * time.Millisecond}, // untagged
+			},
+		}
+
+		err := GenerateHTMLReport(path, result)
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		html := string(data)
+
+		// Filter bar elements
+		require.Contains(t, html, "filter-bar")
+		require.Contains(t, html, "Filter by Tag")
+		require.Contains(t, html, "Select All")
+		require.Contains(t, html, "Select None")
+
+		// Individual tag buttons (sorted: @api, @billing, @smoke)
+		require.Contains(t, html, `data-tag="@api"`)
+		require.Contains(t, html, `data-tag="@billing"`)
+		require.Contains(t, html, `data-tag="@smoke"`)
+
+		// No Tag button
+		require.Contains(t, html, `data-tag=""`)
+		require.Contains(t, html, "No Tag")
+
+		// data-tags attribute on scenario divs
+		require.Contains(t, html, `data-tags="@smoke,@api"`)
+		require.Contains(t, html, `data-tags="@billing"`)
+		require.Contains(t, html, `data-tags=""`)
+
+		// JavaScript filter functions
+		require.Contains(t, html, "toggleTag")
+		require.Contains(t, html, "selectAllTags")
+		require.Contains(t, html, "selectNoneTags")
+		require.Contains(t, html, "applyTagFilter")
+	})
+
+	t.Run("no filter bar when no scenarios", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "report.html")
+
+		result := RunResult{}
+
+		err := GenerateHTMLReport(path, result)
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		html := string(data)
+
+		// Should not contain the filter bar element (class in style block is OK)
+		require.NotContains(t, html, `<div class="filter-bar">`)
+		require.NotContains(t, html, "Filter by Tag")
+	})
+
+	t.Run("no No Tag button when all scenarios have tags", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "report.html")
+
+		result := RunResult{
+			Summary: ReporterSummary{ScenariosTotal: 2, ScenariosPassed: 2},
+			Scenarios: []ScenarioResult{
+				{FeatureName: "F", Name: "S1", Passed: true, Tags: []string{"@smoke"}, Duration: 50 * time.Millisecond},
+				{FeatureName: "F", Name: "S2", Passed: true, Tags: []string{"@api"}, Duration: 80 * time.Millisecond},
+			},
+		}
+
+		err := GenerateHTMLReport(path, result)
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(path)
+		require.NoError(t, err)
+		html := string(data)
+
+		// Should have filter bar with tag buttons
+		require.Contains(t, html, "filter-bar")
+		require.Contains(t, html, `data-tag="@smoke"`)
+		require.Contains(t, html, `data-tag="@api"`)
+
+		// Should NOT have No Tag button
+		require.NotContains(t, html, "No Tag")
+	})
 }

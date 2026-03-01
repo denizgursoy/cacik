@@ -34,6 +34,8 @@ type reportData struct {
 	TotalDuration time.Duration
 	ExecutedAt    time.Time
 	Sections      []statusSection
+	AllTags       []string // all unique individual tags across all scenarios, sorted
+	HasUntagged   bool     // true when at least one scenario has no tags
 }
 
 // sumDurations returns the total duration across a slice of scenarios.
@@ -79,11 +81,30 @@ func buildReportData(result RunResult) reportData {
 		})
 	}
 
+	// Collect unique individual tags and detect untagged scenarios.
+	tagSet := make(map[string]struct{})
+	hasUntagged := false
+	for _, s := range result.Scenarios {
+		if len(s.Tags) == 0 {
+			hasUntagged = true
+		}
+		for _, t := range s.Tags {
+			tagSet[t] = struct{}{}
+		}
+	}
+	allTags := make([]string, 0, len(tagSet))
+	for t := range tagSet {
+		allTags = append(allTags, t)
+	}
+	sort.Strings(allTags)
+
 	return reportData{
 		Summary:       result.Summary,
 		TotalDuration: result.Duration,
 		ExecutedAt:    result.StartedAt,
 		Sections:      sections,
+		AllTags:       allTags,
+		HasUntagged:   hasUntagged,
 	}
 }
 
@@ -269,6 +290,9 @@ func GenerateHTMLReport(path string, result RunResult) error {
 			}
 			return t.Format("2006-01-02 15:04:05")
 		},
+		"joinTags": func(tags []string) string {
+			return strings.Join(tags, ",")
+		},
 	}).Parse(htmlTemplate)
 	if err != nil {
 		return fmt.Errorf("could not parse HTML template: %w", err)
@@ -362,6 +386,36 @@ const htmlTemplate = `<!DOCTYPE html>
     cursor: pointer; font-weight: 500; transition: background 0.15s, border-color 0.15s;
   }
   .toggle-btn:hover { background: #f1f3f5; border-color: #adb5bd; }
+
+  /* ── Tag filter ── */
+  .filter-bar {
+    display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center;
+    margin-bottom: 0.75rem; padding: 0.75rem 1rem;
+    background: #fff; border-radius: 8px; border: 1px solid #e9ecef;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .filter-label {
+    font-size: 0.8rem; font-weight: 600; color: #495057; margin-right: 0.25rem;
+  }
+  .filter-btn {
+    background: #fff; border: 1px solid #dee2e6; border-radius: 6px;
+    padding: 0.25rem 0.6rem; font-size: 0.72rem; color: #495057;
+    cursor: pointer; font-weight: 500; transition: background 0.15s;
+  }
+  .filter-btn:hover { background: #f1f3f5; }
+  .filter-tag {
+    border: 1px solid #dee2e6; border-radius: 12px;
+    padding: 0.2rem 0.6rem; font-size: 0.72rem; cursor: pointer;
+    font-weight: 500; transition: all 0.15s;
+  }
+  .filter-tag.active {
+    background: #228be6; color: #fff; border-color: #228be6;
+  }
+  .filter-tag.inactive {
+    background: #fff; color: #adb5bd; border-color: #dee2e6;
+  }
+  .filter-tag:hover { opacity: 0.85; }
+
   .tag-group-toggle {
     background: none; border: none; font-size: 0.7rem; color: #868e96;
     cursor: pointer; padding: 0; margin-left: auto; font-weight: 500;
@@ -495,6 +549,15 @@ const htmlTemplate = `<!DOCTYPE html>
 {{if not .Sections}}
 <div class="empty-msg">No scenarios were executed.</div>
 {{else}}
+{{if or .AllTags .HasUntagged}}
+<div class="filter-bar">
+  <span class="filter-label">Filter by Tag</span>
+  <button class="filter-btn" onclick="selectAllTags()">Select All</button>
+  <button class="filter-btn" onclick="selectNoneTags()">Select None</button>
+  {{range .AllTags}}<button class="filter-tag active" data-tag="{{.}}" onclick="toggleTag(this)">{{.}}</button>
+  {{end}}{{if $.HasUntagged}}<button class="filter-tag active" data-tag="" onclick="toggleTag(this)">No Tag</button>{{end}}
+</div>
+{{end}}
 <div class="toggle-bar">
   <button class="toggle-btn" onclick="expandAll()">Expand All</button>
   <button class="toggle-btn" onclick="collapseAll()">Collapse All</button>
@@ -508,7 +571,7 @@ const htmlTemplate = `<!DOCTYPE html>
   <div class="tag-group">
     <div class="tag-group-label"><span class="tag-icon">#</span> {{.TagLabel}} <span class="tag-group-meta">({{.Count}} scenarios, {{formatDuration .Duration}})</span><button class="tag-group-toggle" onclick="expandGroup(this)">Expand</button><button class="tag-group-toggle" onclick="collapseGroup(this)">Collapse</button></div>
     {{range .Scenarios}}
-    <div class="scenario {{scenarioClass .Passed}}">
+    <div class="scenario {{scenarioClass .Passed}}" data-tags="{{joinTags .Tags}}">
       <div class="scenario-header" onclick="this.parentElement.classList.toggle('open')">
         <div>
           <span class="feature-label">{{.FeatureName}}</span>{{if .RuleName}} / <span class="feature-label">{{.RuleName}}</span>{{end}}
@@ -591,6 +654,66 @@ function expandGroup(btn) {
 }
 function collapseGroup(btn) {
   btn.closest('.tag-group').querySelectorAll('.scenario').forEach(function(el) { el.classList.remove('open'); });
+}
+
+// Tag filter
+function toggleTag(btn) {
+  btn.classList.toggle('active');
+  btn.classList.toggle('inactive');
+  applyTagFilter();
+}
+function selectAllTags() {
+  document.querySelectorAll('.filter-tag').forEach(function(btn) {
+    btn.classList.add('active');
+    btn.classList.remove('inactive');
+  });
+  applyTagFilter();
+}
+function selectNoneTags() {
+  document.querySelectorAll('.filter-tag').forEach(function(btn) {
+    btn.classList.remove('active');
+    btn.classList.add('inactive');
+  });
+  applyTagFilter();
+}
+function applyTagFilter() {
+  var activeTags = [];
+  var noTagActive = false;
+  document.querySelectorAll('.filter-tag.active').forEach(function(btn) {
+    var tag = btn.getAttribute('data-tag');
+    if (tag === '') {
+      noTagActive = true;
+    } else {
+      activeTags.push(tag);
+    }
+  });
+  document.querySelectorAll('.scenario').forEach(function(el) {
+    var tags = el.getAttribute('data-tags');
+    var show = false;
+    if (!tags) {
+      show = noTagActive;
+    } else {
+      var scenarioTags = tags.split(',');
+      for (var i = 0; i < scenarioTags.length; i++) {
+        if (activeTags.indexOf(scenarioTags[i]) >= 0) {
+          show = true;
+          break;
+        }
+      }
+    }
+    el.style.display = show ? '' : 'none';
+  });
+  // Hide empty tag-groups and sections
+  document.querySelectorAll('.tag-group').forEach(function(g) {
+    var any = false;
+    g.querySelectorAll('.scenario').forEach(function(s) { if (s.style.display !== 'none') any = true; });
+    g.style.display = any ? '' : 'none';
+  });
+  document.querySelectorAll('.section').forEach(function(s) {
+    var any = false;
+    s.querySelectorAll('.scenario').forEach(function(sc) { if (sc.style.display !== 'none') any = true; });
+    s.style.display = any ? '' : 'none';
+  });
 }
 </script>
 </body>
