@@ -280,3 +280,58 @@ func TestValidateExportedFunctions(t *testing.T) {
 		require.NoError(t, err)
 	})
 }
+
+func TestValidateSingleConfig(t *testing.T) {
+	t.Run("passes with zero config functions", func(t *testing.T) {
+		output := &Output{}
+
+		err := validateSingleConfig(output)
+		require.NoError(t, err)
+	})
+
+	t.Run("passes with exactly one config function", func(t *testing.T) {
+		output := &Output{
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/config", FunctionName: "GetConfig", FilePath: "/home/user/myapp/config/config.go"},
+			},
+		}
+
+		err := validateSingleConfig(output)
+		require.NoError(t, err)
+	})
+
+	t.Run("returns error with multiple config functions", func(t *testing.T) {
+		output := &Output{
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "github.com/example/myapp/config", FunctionName: "GetConfig", FilePath: "/home/user/myapp/config/config.go"},
+				{FullPackageName: "github.com/example/myapp/other", FunctionName: "OtherConfig", FilePath: "/home/user/myapp/other/setup.go"},
+			},
+		}
+
+		err := validateSingleConfig(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "found 2 config functions")
+		require.Contains(t, err.Error(), "only one is allowed")
+		require.Contains(t, err.Error(), "GetConfig")
+		require.Contains(t, err.Error(), "/home/user/myapp/config/config.go")
+		require.Contains(t, err.Error(), "OtherConfig")
+		require.Contains(t, err.Error(), "/home/user/myapp/other/setup.go")
+	})
+
+	t.Run("returns error with three config functions", func(t *testing.T) {
+		output := &Output{
+			ConfigFunctions: []*FunctionLocator{
+				{FullPackageName: "a", FunctionName: "ConfigA", FilePath: "/a/config.go"},
+				{FullPackageName: "b", FunctionName: "ConfigB", FilePath: "/b/config.go"},
+				{FullPackageName: "c", FunctionName: "ConfigC", FilePath: "/c/config.go"},
+			},
+		}
+
+		err := validateSingleConfig(output)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "found 3 config functions")
+		require.Contains(t, err.Error(), "ConfigA")
+		require.Contains(t, err.Error(), "ConfigB")
+		require.Contains(t, err.Error(), "ConfigC")
+	})
+}

@@ -67,6 +67,11 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 			recursively.CurrentPackagePath = pkgPath
 		}
 
+		// Validate that only one config function exists
+		if err := validateSingleConfig(recursively); err != nil {
+			return err
+		}
+
 		// Validate that all cross-package functions are exported
 		if err := validateExportedFunctions(recursively); err != nil {
 			return err
@@ -175,6 +180,22 @@ func detectPackageName(dir string, outputFile string) (string, error) {
 	}
 
 	return "", nil
+}
+
+// validateSingleConfig checks that at most one config function returning
+// *cacik.Config was discovered. If multiple are found, it returns an error
+// listing each function and its file location.
+func validateSingleConfig(output *Output) error {
+	if len(output.ConfigFunctions) <= 1 {
+		return nil
+	}
+
+	var items []string
+	for _, cf := range output.ConfigFunctions {
+		items = append(items, fmt.Sprintf("  - %s in %s", cf.FunctionName, cf.FilePath))
+	}
+	return fmt.Errorf("found %d config functions returning *cacik.Config; only one is allowed:\n%s",
+		len(output.ConfigFunctions), strings.Join(items, "\n"))
 }
 
 // validateExportedFunctions checks that all discovered step, config, and hooks

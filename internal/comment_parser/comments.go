@@ -106,12 +106,14 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
 							IsExported:      ast.IsExported(decl.Name.Name),
+							FilePath:        filePath,
 						})
 					} else if IsHooksFunction(decl, node.Imports) {
 						output.HooksFunctions = append(output.HooksFunctions, &generator.FunctionLocator{
 							FullPackageName: importPathOfFuncDecl,
 							FunctionName:    decl.Name.Name,
 							IsExported:      ast.IsExported(decl.Name.Name),
+							FilePath:        filePath,
 						})
 					} else if isStepFunction {
 						// Transform {param} syntax to regex
@@ -134,6 +136,7 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 								FullPackageName: importPathOfFuncDecl,
 								FunctionName:    decl.Name.Name,
 								IsExported:      ast.IsExported(decl.Name.Name),
+								FilePath:        filePath,
 							},
 						})
 					}

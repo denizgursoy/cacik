@@ -56,7 +56,7 @@ import (
 )
 
 func TestCacik(t *testing.T) {
-	config := cacik.MergeConfigs(a.ConfigFunction())
+	config := a.ConfigFunction()
 	hooks := []*cacik.Hooks{b.HooksFunction()}
 	err := runner.NewCucumberRunner(t).
 		WithConfig(config).

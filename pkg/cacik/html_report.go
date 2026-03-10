@@ -590,8 +590,7 @@ const htmlTemplate = `<!DOCTYPE html>
         {{range .FeatureBgSteps}}
         <div class="step">
           <span class="step-symbol {{statusClass .Status}}">{{statusSymbol .Status}}</span>
-          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>
-          {{colorizeStepText .}}
+          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>{{colorizeStepText .}}
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}
@@ -603,8 +602,7 @@ const htmlTemplate = `<!DOCTYPE html>
         {{range .RuleBgSteps}}
         <div class="step">
           <span class="step-symbol {{statusClass .Status}}">{{statusSymbol .Status}}</span>
-          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>
-          {{colorizeStepText .}}
+          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>{{colorizeStepText .}}
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}
@@ -614,8 +612,7 @@ const htmlTemplate = `<!DOCTYPE html>
         {{range .Steps}}
         <div class="step">
           <span class="step-symbol {{statusClass .Status}}">{{statusSymbol .Status}}</span>
-          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>
-          {{colorizeStepText .}}
+          <span class="step-keyword {{statusClass .Status}}">{{.Keyword}}</span>{{colorizeStepText .}}
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}

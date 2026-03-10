@@ -924,7 +924,7 @@ func MyConfig() *cacik.Config {
 | `ReportFile` | `string` | File name (without extension) for the HTML test report | `--report-file` |
 | `AfterRun` | `func(RunResult)` | Callback after all scenarios complete | - |
 
-Multiple config functions are merged (last wins for conflicts).
+Only one config function is allowed per project. If multiple functions returning `*cacik.Config` are found, code generation fails with an error showing their locations.
 
 ## HTML Report
 

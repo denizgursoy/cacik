@@ -12,7 +12,8 @@ type (
 	FunctionLocator struct {
 		FullPackageName string
 		FunctionName    string
-		IsExported      bool // true when the function name starts with an uppercase letter
+		IsExported      bool   // true when the function name starts with an uppercase letter
+		FilePath        string // source file where the function is defined
 	}
 
 	StepFunctionLocator struct {
@@ -123,14 +124,11 @@ func (o *Output) Generate(writer io.Writer) error {
 
 	var statements []jen.Code
 
-	// Collect configs: config := cacik.MergeConfigs(...)
-	if len(o.ConfigFunctions) > 0 {
-		configCalls := make([]jen.Code, 0, len(o.ConfigFunctions))
-		for _, cf := range o.ConfigFunctions {
-			configCalls = append(configCalls, o.qualOrLocal(cf.FullPackageName, cf.FunctionName).Call())
-		}
+	// Collect config: config := configFunc()
+	if len(o.ConfigFunctions) == 1 {
+		cf := o.ConfigFunctions[0]
 		statements = append(statements,
-			jen.Id("config").Op(":=").Qual("github.com/denizgursoy/cacik/pkg/cacik", "MergeConfigs").Call(configCalls...),
+			jen.Id("config").Op(":=").Add(o.qualOrLocal(cf.FullPackageName, cf.FunctionName)).Call(),
 		)
 	}
 

@@ -1,7 +1,7 @@
 package cacik
 
 // Config holds runtime configuration settings for cacik.
-// Settings are merged from all discovered config functions (last wins).
+// Discovered from a single function returning *cacik.Config.
 // CLI flags (--fail-fast, --no-color, --disable-log, --disable-reporter) always override code config.
 type Config struct {
 	// FailFast stops execution on first scenario failure.
@@ -35,40 +35,4 @@ type Config struct {
 	// This callback runs after the HTML report is generated (if configured)
 	// and before Run() returns.
 	AfterRun func(result RunResult)
-}
-
-// MergeConfigs combines multiple configs into one.
-// Later configs override earlier ones (last wins).
-func MergeConfigs(configs ...*Config) *Config {
-	result := &Config{}
-
-	for _, cfg := range configs {
-		if cfg == nil {
-			continue
-		}
-
-		if cfg.FailFast {
-			result.FailFast = true
-		}
-		if cfg.NoColor {
-			result.NoColor = true
-		}
-		if cfg.DisableLog {
-			result.DisableLog = true
-		}
-		if cfg.DisableReporter {
-			result.DisableReporter = true
-		}
-		if cfg.Logger != nil {
-			result.Logger = cfg.Logger
-		}
-		if cfg.ReportFile != "" {
-			result.ReportFile = cfg.ReportFile
-		}
-		if cfg.AfterRun != nil {
-			result.AfterRun = cfg.AfterRun
-		}
-	}
-
-	return result
 }
