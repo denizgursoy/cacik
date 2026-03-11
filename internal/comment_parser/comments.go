@@ -423,14 +423,6 @@ var builtInTypes = map[string]string{
 	"regex": `(/[^/]+/)`,
 }
 
-// IsBuiltInTypeName reports whether name (case-insensitive) is a built-in
-// parameter type. This is used by the generator to reject patterns.yaml
-// entries that would shadow a built-in type.
-func IsBuiltInTypeName(name string) bool {
-	_, ok := builtInTypes[strings.ToLower(name)]
-	return ok
-}
-
 // transformStepPattern replaces {typename} placeholders with regex patterns
 func transformStepPattern(pattern string, customTypes map[string]*generator.CustomType, patterns map[string]string) (string, error) {
 	// Find all {word} patterns

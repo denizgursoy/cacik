@@ -38,6 +38,7 @@ type (
 		CurrentPackagePath string                 // Full import path of the package where the test file is generated
 		PackageName        string                 // Short package name (e.g., "myapp"); if empty, defaults to "main"
 		TestFuncName       string                 // Name of the generated test function (e.g., "TestBilling"); derived from output prefix
+		NoShuffle          bool                   // When true, TestMain with test shuffling is not generated
 	}
 )
 
@@ -198,6 +199,16 @@ func (o *Output) Generate(writer io.Writer) error {
 	mainFile.Func().Id(testFuncName).Params(
 		jen.Id("t").Op("*").Qual("testing", "T"),
 	).Block(statements...)
+
+	// Generate func TestMain(m *testing.M) to enable test shuffling (unless disabled)
+	if !o.NoShuffle {
+		mainFile.Func().Id("TestMain").Params(
+			jen.Id("m").Op("*").Qual("testing", "M"),
+		).Block(
+			jen.Qual("os", "Args").Op("=").Append(jen.Qual("os", "Args"), jen.Lit("-test.shuffle=on")),
+			jen.Qual("os", "Exit").Call(jen.Id("m").Dot("Run").Call()),
+		)
+	}
 
 	_, err := writer.Write([]byte(mainFile.GoString()))
 

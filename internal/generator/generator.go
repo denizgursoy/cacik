@@ -28,6 +28,7 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 
 	codeFlag := flag.String("code", "", "directories to search for functions seperated by comma")
 	outputFlag := flag.String("output", "", "output file prefix (e.g. 'billing' produces billing_test.go with TestBilling)")
+	noShuffleFlag := flag.Bool("no-shuffle", false, "disable test shuffling in the generated test file")
 	flag.Parse()
 
 	if len(strings.TrimSpace(*codeFlag)) == 0 {
@@ -75,6 +76,7 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 		if pkgPath != "" {
 			recursively.CurrentPackagePath = pkgPath
 		}
+		recursively.NoShuffle = *noShuffleFlag
 
 		// Validate that only one config function exists
 		if err := validateSingleConfig(recursively); err != nil {

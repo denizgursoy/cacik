@@ -50,6 +50,7 @@ import (
 	b "b"
 	cacik "github.com/denizgursoy/cacik/pkg/cacik"
 	runner "github.com/denizgursoy/cacik/pkg/runner"
+	"os"
 	package1 "package1"
 	package2 "package2"
 	"testing"
@@ -67,6 +68,10 @@ func TestCacik(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+func TestMain(m *testing.M) {
+	os.Args = append(os.Args, "-test.shuffle=on")
+	os.Exit(m.Run())
 }
 `
 )
@@ -137,6 +142,11 @@ func TestOutput_Generate_TestMode(t *testing.T) {
 		// Should pass t to NewCucumberRunner constructor
 		require.Contains(t, output, "NewCucumberRunner(t)")
 		require.NotContains(t, output, "WithTestingT")
+
+		// Should generate TestMain with shuffle
+		require.Contains(t, output, "func TestMain(m *testing.M)")
+		require.Contains(t, output, `"-test.shuffle=on"`)
+		require.Contains(t, output, "os.Exit(m.Run())")
 	})
 
 	t.Run("should call same-package functions without import qualifier", func(t *testing.T) {
@@ -228,6 +238,10 @@ func TestOutput_Generate_CustomTestFuncName(t *testing.T) {
 
 		require.Contains(t, output, "func TestBilling(t *testing.T)")
 		require.NotContains(t, output, "func TestCacik(t *testing.T)")
+
+		// TestMain is always generated regardless of custom test function name
+		require.Contains(t, output, "func TestMain(m *testing.M)")
+		require.Contains(t, output, `"-test.shuffle=on"`)
 	})
 
 	t.Run("defaults to TestCacik when TestFuncName is empty", func(t *testing.T) {
@@ -252,6 +266,67 @@ func TestOutput_Generate_CustomTestFuncName(t *testing.T) {
 		output := builder.String()
 
 		require.Contains(t, output, "func TestCacik(t *testing.T)")
+
+		// TestMain is always generated
+		require.Contains(t, output, "func TestMain(m *testing.M)")
+	})
+}
+
+func TestOutput_Generate_NoShuffle(t *testing.T) {
+	t.Run("should not generate TestMain when NoShuffle is true", func(t *testing.T) {
+		testData := Output{
+			PackageName: "myapp",
+			NoShuffle:   true,
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^step 1$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "pkg",
+						FunctionName:    "Step1",
+						IsExported:      true,
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		require.Contains(t, output, "func TestCacik(t *testing.T)")
+		require.NotContains(t, output, "func TestMain(m *testing.M)")
+		require.NotContains(t, output, "-test.shuffle=on")
+		require.NotContains(t, output, `"os"`)
+	})
+
+	t.Run("should generate TestMain when NoShuffle is false", func(t *testing.T) {
+		testData := Output{
+			PackageName: "myapp",
+			NoShuffle:   false,
+			StepFunctions: []*StepFunctionLocator{
+				{
+					StepName: "^step 1$",
+					FunctionLocator: &FunctionLocator{
+						FullPackageName: "pkg",
+						FunctionName:    "Step1",
+						IsExported:      true,
+					},
+				},
+			},
+		}
+
+		builder := &strings.Builder{}
+		err := testData.Generate(builder)
+
+		require.Nil(t, err)
+		output := builder.String()
+
+		require.Contains(t, output, "func TestMain(m *testing.M)")
+		require.Contains(t, output, `"-test.shuffle=on"`)
+		require.Contains(t, output, "os.Exit(m.Run())")
+		require.Contains(t, output, `"os"`)
 	})
 }
 

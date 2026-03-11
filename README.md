@@ -767,6 +767,20 @@ This produces `billing_test.go` with `func TestBilling(t *testing.T)`. The prefi
 | `my_feature` | `my_feature_test.go` | `TestMyFeature` |
 | `user_auth` | `user_auth_test.go` | `TestUserAuth` |
 
+By default, the generated file includes a `TestMain` function that enables test shuffling so scenarios run in a random order on every execution. Use the `--no-shuffle` flag to disable this:
+
+```shell
+cacik --no-shuffle
+```
+
+### Code Generation Flags
+
+| Flag | Description |
+|------|-------------|
+| `--output` | File name prefix (e.g. `billing` produces `billing_test.go` with `TestBilling`) |
+| `--code` | Directories to search for step functions (comma-separated) |
+| `--no-shuffle` | Disable test shuffling (omits `TestMain` from the generated file) |
+
 Cacik will detect your package name and create a Go test file:
 
 ```
@@ -781,6 +795,7 @@ cacik_test.go
 package myapp
 
 import (
+	"os"
 	runner "github.com/denizgursoy/cacik/pkg/runner"
 	"testing"
 )
@@ -794,7 +809,14 @@ func TestCacik(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMain(m *testing.M) {
+	os.Args = append(os.Args, "-test.shuffle=on")
+	os.Exit(m.Run())
+}
 ```
+
+The generated file includes a `TestMain` function that enables test shuffling by default. This ensures scenarios run in a random order on every execution, helping catch unintended inter-scenario dependencies. Use `cacik --no-shuffle` to omit `TestMain` from the generated file.
 
 Since the step functions are in the same package, they are called directly without an import qualifier. If steps are in a different package, cacik will add the appropriate import and qualifier automatically.
 
