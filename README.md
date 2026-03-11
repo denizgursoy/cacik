@@ -440,6 +440,52 @@ When I select RED
 When I select Red
 ```
 
+### Custom Patterns File
+
+For domain-specific patterns that aren't covered by built-in types or custom enum types, you can define regex patterns in a `patterns.yaml` file in your project root (current working directory when running `cacik`).
+
+#### File Format
+
+`patterns.yaml` is a flat YAML map where each key is a pattern name and each value is a regex pattern:
+
+```yaml
+iban: '[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}'
+postal-code: '\d{5}(-\d{4})?'
+```
+
+#### Usage in Step Definitions
+
+Use `{pattern-name}` syntax in step comments, just like built-in types:
+
+```go
+// @cacik `^the account IBAN is {iban}$`
+func VerifyIBAN(ctx *cacik.Context, iban string) {
+    ctx.Logger().Info("verifying IBAN", "iban", iban)
+}
+
+// @cacik `^the address has postal code {postal-code}$`
+func CheckPostalCode(ctx *cacik.Context, code string) {
+    ctx.Logger().Info("checking postal code", "code", code)
+}
+```
+
+The matched value's Go type is inferred from the step function's parameter signature, the same as built-in types.
+
+#### Pattern Name Resolution Order
+
+When cacik encounters a `{name}` placeholder, it resolves in this order:
+
+1. **Built-in types** (`{int}`, `{string}`, etc.) — always win
+2. **Custom enum types** (`{Color}`) — discovered from Go source
+3. **File-based patterns** (`{iban}`, `{postal-code}`) — from `patterns.yaml`
+4. **Error** — unknown type
+
+If a `patterns.yaml` entry has the same name as a built-in type, the built-in type takes precedence and the file-based entry is ignored. Pattern name lookup is case-insensitive.
+
+#### Validation
+
+During code generation, cacik validates that every regex in `patterns.yaml` is syntactically valid. If a pattern contains invalid regex, code generation fails with a descriptive error.
+
 ### Function Signature
 
 Step functions do not return anything. Use `ctx.Assert()` for assertions or `ctx.TestingT()` for direct test control:

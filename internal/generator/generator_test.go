@@ -23,7 +23,7 @@ func TestStartApplication(t *testing.T) {
 		dir, _ := os.Getwd()
 		mockGoCodeParser.
 			EXPECT().
-			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), dir).
+			ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), dir, gomock.Any()).
 			Return(&Output{StepFunctions: []*StepFunctionLocator{}}, nil).
 			Times(1)
 
@@ -41,7 +41,7 @@ func TestStartApplication(t *testing.T) {
 		for _, s := range strings.Split(expectedPath, Separator) {
 			mockGoCodeParser.
 				EXPECT().
-				ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), s).
+				ParseFunctionCommentsOfGoFilesInDirectoryRecursively(gomock.Any(), s, gomock.Any()).
 				Return(&Output{StepFunctions: []*StepFunctionLocator{}}, nil).
 				Times(1)
 		}
@@ -333,5 +333,69 @@ func TestValidateSingleConfig(t *testing.T) {
 		require.Contains(t, err.Error(), "ConfigA")
 		require.Contains(t, err.Error(), "ConfigB")
 		require.Contains(t, err.Error(), "ConfigC")
+	})
+}
+
+func TestReadPatternsFile(t *testing.T) {
+	// Each subtest changes CWD to a temp directory, so we must restore it after.
+	originalDir, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() { os.Chdir(originalDir) })
+
+	t.Run("returns empty map when no patterns.yaml exists", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.Chdir(dir))
+
+		patterns, err := readPatternsFile()
+		require.NoError(t, err)
+		require.NotNil(t, patterns)
+		require.Empty(t, patterns)
+	})
+
+	t.Run("parses valid patterns.yaml", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.Chdir(dir))
+		require.NoError(t, os.WriteFile("patterns.yaml", []byte(
+			"iban: '[A-Z]{2}\\d{2}[A-Z0-9]{4}\\d{7}'\npostal-code: '\\d{5}(-\\d{4})?'\n",
+		), 0o644))
+
+		patterns, err := readPatternsFile()
+		require.NoError(t, err)
+		require.Len(t, patterns, 2)
+		require.Equal(t, `[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}`, patterns["iban"])
+		require.Equal(t, `\d{5}(-\d{4})?`, patterns["postal-code"])
+	})
+
+	t.Run("normalizes keys to lowercase", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.Chdir(dir))
+		require.NoError(t, os.WriteFile("patterns.yaml", []byte(
+			"IBAN: '[A-Z]{2}\\d{2}'\n",
+		), 0o644))
+
+		patterns, err := readPatternsFile()
+		require.NoError(t, err)
+		require.Contains(t, patterns, "iban")
+	})
+
+	t.Run("returns error for malformed YAML", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.Chdir(dir))
+		require.NoError(t, os.WriteFile("patterns.yaml", []byte(":\n  - broken\n  broken: ["), 0o644))
+
+		_, err := readPatternsFile()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "cannot parse patterns.yaml")
+	})
+
+	t.Run("returns error for invalid regex", func(t *testing.T) {
+		dir := t.TempDir()
+		require.NoError(t, os.Chdir(dir))
+		require.NoError(t, os.WriteFile("patterns.yaml", []byte("bad-pattern: '['\n"), 0o644))
+
+		_, err := readPatternsFile()
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid regex")
+		require.Contains(t, err.Error(), "bad-pattern")
 	})
 }

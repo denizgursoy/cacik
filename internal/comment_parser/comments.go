@@ -45,7 +45,7 @@ func NewGoSourceFileParser() *GoSourceFileParser {
 	return &GoSourceFileParser{}
 }
 
-func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, parentDirectory string) (
+func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx context.Context, parentDirectory string, patterns map[string]string) (
 	*generator.Output, error) {
 	directories := getAllSubDirectories(parentDirectory)
 	directories = append(directories, parentDirectory)
@@ -117,7 +117,7 @@ func (g *GoSourceFileParser) ParseFunctionCommentsOfGoFilesInDirectoryRecursivel
 						})
 					} else if isStepFunction {
 						// Transform {param} syntax to regex
-						transformedStep, err := transformStepPattern(*step, output.CustomTypes)
+						transformedStep, err := transformStepPattern(*step, output.CustomTypes, patterns)
 						if err != nil {
 							return nil, fmt.Errorf("error in function %s: %w", decl.Name.Name, err)
 						}
@@ -423,8 +423,16 @@ var builtInTypes = map[string]string{
 	"regex": `(/[^/]+/)`,
 }
 
+// IsBuiltInTypeName reports whether name (case-insensitive) is a built-in
+// parameter type. This is used by the generator to reject patterns.yaml
+// entries that would shadow a built-in type.
+func IsBuiltInTypeName(name string) bool {
+	_, ok := builtInTypes[strings.ToLower(name)]
+	return ok
+}
+
 // transformStepPattern replaces {typename} placeholders with regex patterns
-func transformStepPattern(pattern string, customTypes map[string]*generator.CustomType) (string, error) {
+func transformStepPattern(pattern string, customTypes map[string]*generator.CustomType, patterns map[string]string) (string, error) {
 	// Find all {word} patterns
 	result := pattern
 	start := 0
@@ -451,19 +459,19 @@ func transformStepPattern(pattern string, customTypes map[string]*generator.Cust
 		// First, check if it's a built-in type
 		if builtIn, ok := builtInTypes[typeNameLower]; ok {
 			regexPattern = builtIn
-		} else {
-			// Look up the custom type
-			ct, ok := customTypes[typeNameLower]
-			if !ok {
-				return "", fmt.Errorf("unknown parameter type {%s} in step pattern (not a built-in type or custom type)", typeName)
-			}
-
+		} else if ct, ok := customTypes[typeNameLower]; ok {
+			// Second, check custom enum types from Go source
 			if len(ct.Values) == 0 {
 				return "", fmt.Errorf("custom type %s has no defined constants", ct.Name)
 			}
 
 			// Replace {typename} with regex pattern from custom type
 			regexPattern = "(" + ct.RegexPattern() + ")"
+		} else if pat, ok := patterns[typeNameLower]; ok {
+			// Third, check file-based patterns from patterns.yaml
+			regexPattern = "(" + pat + ")"
+		} else {
+			return "", fmt.Errorf("unknown parameter type {%s} in step pattern (not a built-in type, custom type, or file-based pattern)", typeName)
 		}
 
 		result = result[:openBrace] + regexPattern + result[closeBrace+1:]

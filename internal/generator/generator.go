@@ -2,6 +2,7 @@ package generator
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"go/parser"
@@ -9,10 +10,12 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"unicode"
 
 	"golang.org/x/mod/modfile"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -38,8 +41,14 @@ func StartGenerator(ctx context.Context, codeParser GoCodeParser) error {
 		funcSources = append(funcSources, strings.Split(*codeFlag, Separator)...)
 	}
 
+	// Load custom patterns from patterns.yaml in the current directory
+	patterns, err := readPatternsFile()
+	if err != nil {
+		return err
+	}
+
 	for _, source := range funcSources {
-		recursively, err := codeParser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx, source)
+		recursively, err := codeParser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(ctx, source, patterns)
 		if err != nil {
 			log.Println(err.Error())
 			return err
@@ -273,4 +282,42 @@ func detectImportPath(dir string) (string, error) {
 		}
 		current = parent
 	}
+}
+
+const patternsFileName = "patterns.yaml"
+
+// readPatternsFile reads custom parameter patterns from patterns.yaml in the
+// current working directory. Returns an empty map if the file does not exist.
+// Returns an error if the file exists but is malformed or contains invalid regex.
+// Pattern names are normalized to lowercase.
+func readPatternsFile() (map[string]string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return nil, fmt.Errorf("cannot get working directory: %w", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(cwd, patternsFileName))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return make(map[string]string), nil
+		}
+		return nil, fmt.Errorf("cannot read %s: %w", patternsFileName, err)
+	}
+
+	raw := make(map[string]string)
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("cannot parse %s: %w", patternsFileName, err)
+	}
+
+	// Normalize keys to lowercase and validate regex syntax
+	patterns := make(map[string]string, len(raw))
+	for name, pattern := range raw {
+		lower := strings.ToLower(name)
+		if _, err := regexp.Compile(pattern); err != nil {
+			return nil, fmt.Errorf("invalid regex for pattern %q in %s: %w", name, patternsFileName, err)
+		}
+		patterns[lower] = pattern
+	}
+
+	return patterns, nil
 }

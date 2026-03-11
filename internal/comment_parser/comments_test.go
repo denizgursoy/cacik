@@ -2,7 +2,6 @@ package comment_parser
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,7 +28,7 @@ func testdataDir(t *testing.T) string {
 func parseDir(t *testing.T, dir string) *generator.Output {
 	t.Helper()
 	parser := NewGoSourceFileParser()
-	out, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), dir)
+	out, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Background(), dir, nil)
 	require.NoError(t, err)
 	return out
 }
@@ -681,7 +680,7 @@ func TestDuplicateStepDetection(t *testing.T) {
 
 		parser := NewGoSourceFileParser()
 		_, err := parser.ParseFunctionCommentsOfGoFilesInDirectoryRecursively(
-			context.Background(), dir,
+			context.Background(), dir, nil,
 		)
 
 		require.NotNil(t, err)
@@ -765,7 +764,7 @@ func TestTransformStepPattern(t *testing.T) {
 			},
 		}
 
-		result, err := transformStepPattern("^I select {color}$", customTypes)
+		result, err := transformStepPattern("^I select {color}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, "blue")
 		require.Contains(t, result, "red")
@@ -776,7 +775,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("returns error for unknown type", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		_, err := transformStepPattern("^I select {unknown}$", customTypes)
+		_, err := transformStepPattern("^I select {unknown}$", customTypes, nil)
 		require.NotNil(t, err)
 		require.Contains(t, err.Error(), "unknown parameter type")
 	})
@@ -790,7 +789,7 @@ func TestTransformStepPattern(t *testing.T) {
 			},
 		}
 
-		_, err := transformStepPattern("^I select {empty}$", customTypes)
+		_, err := transformStepPattern("^I select {empty}$", customTypes, nil)
 		require.NotNil(t, err)
 		require.Contains(t, err.Error(), "no defined constants")
 	})
@@ -809,7 +808,7 @@ func TestTransformStepPattern(t *testing.T) {
 			},
 		}
 
-		result, err := transformStepPattern("^I want {color} and {size}$", customTypes)
+		result, err := transformStepPattern("^I want {color} and {size}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, "red")
 		require.Contains(t, result, "large")
@@ -819,7 +818,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {int} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^I have {int} apples$", customTypes)
+		result, err := transformStepPattern("^I have {int} apples$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^I have (-?\d+) apples$`, result)
 	})
@@ -827,7 +826,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {float} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^the price is {float}$", customTypes)
+		result, err := transformStepPattern("^the price is {float}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^the price is (-?\d*\.?\d+)$`, result)
 	})
@@ -835,7 +834,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {word} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^my name is {word}$", customTypes)
+		result, err := transformStepPattern("^my name is {word}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^my name is (\w+)$`, result)
 	})
@@ -843,7 +842,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {string} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^I say {string}$", customTypes)
+		result, err := transformStepPattern("^I say {string}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^I say "([^"]*)"$`, result)
 	})
@@ -851,7 +850,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {} (empty) to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^I have {} items$", customTypes)
+		result, err := transformStepPattern("^I have {} items$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^I have (.*) items$`, result)
 	})
@@ -859,7 +858,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {any} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^I see {any}$", customTypes)
+		result, err := transformStepPattern("^I see {any}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^I see (.*)$`, result)
 	})
@@ -867,7 +866,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {time} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^the meeting is at {time}$", customTypes)
+		result, err := transformStepPattern("^the meeting is at {time}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, `\d{1,2}:\d{2}`)
 	})
@@ -875,7 +874,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {date} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^the event is on {date}$", customTypes)
+		result, err := transformStepPattern("^the event is on {date}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, `\d{4}[-/]\d{2}[-/]\d{2}`)
 	})
@@ -883,7 +882,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {datetime} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^the appointment is at {datetime}$", customTypes)
+		result, err := transformStepPattern("^the appointment is at {datetime}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, `\d{4}[-/]\d{2}[-/]\d{2}`)
 		require.Contains(t, result, `\d{1,2}:\d{2}`)
@@ -892,7 +891,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {timezone} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^convert to {timezone}$", customTypes)
+		result, err := transformStepPattern("^convert to {timezone}$", customTypes, nil)
 		require.Nil(t, err)
 		// Should contain patterns for Z, UTC, offset, and IANA names
 		require.Contains(t, result, "Z")
@@ -904,7 +903,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("time pattern includes optional timezone", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^meeting at {time}$", customTypes)
+		result, err := transformStepPattern("^meeting at {time}$", customTypes, nil)
 		require.Nil(t, err)
 		// Should contain timezone patterns as optional
 		require.Contains(t, result, "Z|UTC")
@@ -914,7 +913,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("datetime pattern includes optional timezone", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^appointment at {datetime}$", customTypes)
+		result, err := transformStepPattern("^appointment at {datetime}$", customTypes, nil)
 		require.Nil(t, err)
 		// Should contain timezone patterns as optional
 		require.Contains(t, result, "Z|UTC")
@@ -924,7 +923,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {email} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^user {email} logged in$", customTypes)
+		result, err := transformStepPattern("^user {email} logged in$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^user ([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}) logged in$`, result)
 	})
@@ -932,7 +931,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {duration} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^wait for {duration}$", customTypes)
+		result, err := transformStepPattern("^wait for {duration}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^wait for (-?(?:\d+\.?\d*(?:ns|us|µs|ms|s|m|h))+)$`, result)
 	})
@@ -940,7 +939,7 @@ func TestTransformStepPattern(t *testing.T) {
 	t.Run("transforms {url} to regex", func(t *testing.T) {
 		customTypes := map[string]*generator.CustomType{}
 
-		result, err := transformStepPattern("^navigate to {url}$", customTypes)
+		result, err := transformStepPattern("^navigate to {url}$", customTypes, nil)
 		require.Nil(t, err)
 		require.Equal(t, `^navigate to (https?://[^\s]+)$`, result)
 	})
@@ -954,7 +953,7 @@ func TestTransformStepPattern(t *testing.T) {
 			},
 		}
 
-		result, err := transformStepPattern("^I have {int} {color} items$", customTypes)
+		result, err := transformStepPattern("^I have {int} {color} items$", customTypes, nil)
 		require.Nil(t, err)
 		require.Contains(t, result, `(-?\d+)`)
 		require.Contains(t, result, "red")
@@ -978,6 +977,7 @@ func TestTransformStepPattern(t *testing.T) {
 		result, err := transformStepPattern(
 			"^I want a {color} (car|bike) with {int} doors costing {float} dollars named {string} at {priority} priority$",
 			customTypes,
+			nil,
 		)
 		require.Nil(t, err)
 
@@ -1007,8 +1007,99 @@ func TestTransformStepPattern(t *testing.T) {
 		require.Contains(t, result, "2")
 		require.Contains(t, result, "3")
 	})
+
+	// ─── file-based pattern tests ──────────────────────────────────────
+
+	t.Run("transforms file-based pattern to regex", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+		patterns := map[string]string{
+			"iban":        `[A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16}`,
+			"postal-code": `\d{5}(-\d{4})?`,
+		}
+
+		result, err := transformStepPattern("^the account IBAN is {iban}$", customTypes, patterns)
+		require.Nil(t, err)
+		require.Equal(t, `^the account IBAN is ([A-Z]{2}\d{2}[A-Z0-9]{4}\d{7}([A-Z0-9]?){0,16})$`, result)
+	})
+
+	t.Run("file-based pattern lookup is case-insensitive", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+		patterns := map[string]string{
+			"postal-code": `\d{5}(-\d{4})?`,
+		}
+
+		result, err := transformStepPattern("^the zip is {Postal-Code}$", customTypes, patterns)
+		require.Nil(t, err)
+		require.Equal(t, `^the zip is (\d{5}(-\d{4})?)$`, result)
+	})
+
+	t.Run("built-in type wins over file-based pattern", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+		patterns := map[string]string{
+			"int": `SHOULD_NOT_APPEAR`,
+		}
+
+		result, err := transformStepPattern("^I have {int} apples$", customTypes, patterns)
+		require.Nil(t, err)
+		require.Equal(t, `^I have (-?\d+) apples$`, result)
+		require.NotContains(t, result, "SHOULD_NOT_APPEAR")
+	})
+
+	t.Run("custom enum type wins over file-based pattern", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red", "Blue": "blue"},
+			},
+		}
+		patterns := map[string]string{
+			"color": `SHOULD_NOT_APPEAR`,
+		}
+
+		result, err := transformStepPattern("^I select {color}$", customTypes, patterns)
+		require.Nil(t, err)
+		require.Contains(t, result, "red")
+		require.Contains(t, result, "blue")
+		require.NotContains(t, result, "SHOULD_NOT_APPEAR")
+	})
+
+	t.Run("handles mixed built-in, custom, and file-based patterns", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{
+			"color": {
+				Name:       "Color",
+				Underlying: "string",
+				Values:     map[string]string{"Red": "red"},
+			},
+		}
+		patterns := map[string]string{
+			"postal-code": `\d{5}`,
+		}
+
+		result, err := transformStepPattern("^I have {int} {color} items at {postal-code}$", customTypes, patterns)
+		require.Nil(t, err)
+		require.Contains(t, result, `(-?\d+)`) // built-in {int}
+		require.Contains(t, result, "red")     // custom enum {color}
+		require.Contains(t, result, `(\d{5})`) // file-based {postal-code}
+	})
+
+	t.Run("returns error for unknown type even with file-based patterns", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+		patterns := map[string]string{
+			"iban": `[A-Z]{2}\d{2}`,
+		}
+
+		_, err := transformStepPattern("^check {unknown-type}$", customTypes, patterns)
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "unknown parameter type")
+		require.Contains(t, err.Error(), "file-based pattern")
+	})
+
+	t.Run("file-based pattern with nil patterns map", func(t *testing.T) {
+		customTypes := map[string]*generator.CustomType{}
+
+		_, err := transformStepPattern("^check {iban}$", customTypes, nil)
+		require.NotNil(t, err)
+		require.Contains(t, err.Error(), "unknown parameter type")
+	})
 }
-
-// ─── unused import guard ────────────────────────────────────────────────────
-
-var _ = fmt.Sprintf // ensure fmt is used

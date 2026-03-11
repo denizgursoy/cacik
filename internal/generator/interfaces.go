@@ -5,7 +5,7 @@ import "context"
 
 type (
 	GoCodeParser interface {
-		ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Context, string) (*Output, error)
+		ParseFunctionCommentsOfGoFilesInDirectoryRecursively(context.Context, string, map[string]string) (*Output, error)
 	}
 	GherkinParser interface {
 	}
