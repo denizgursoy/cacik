@@ -448,7 +448,6 @@ const htmlTemplate = `<!DOCTYPE html>
     display: flex; gap: 0.75rem; align-items: center;
     font-size: 0.78rem; color: #868e96;
   }
-  .feature-label { color: #495057; font-size: 0.78rem; }
   .tag {
     background: #e9ecef; border-radius: 4px; padding: 0.1rem 0.45rem;
     font-size: 0.68rem; color: #495057; font-weight: 500;
@@ -574,8 +573,6 @@ const htmlTemplate = `<!DOCTYPE html>
     <div class="scenario {{scenarioClass .Passed}}" data-tags="{{joinTags .Tags}}">
       <div class="scenario-header" onclick="this.parentElement.classList.toggle('open')">
         <div>
-          <span class="feature-label">{{.FeatureName}}</span>{{if .RuleName}} / <span class="feature-label">{{.RuleName}}</span>{{end}}
-          <br>
           <span class="scenario-name">{{.Name}}</span>
           {{range .Tags}}<span class="tag">{{.}}</span> {{end}}
         </div>
@@ -585,6 +582,7 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
       </div>
       <div class="steps">
+        <div class="step-group-label"><span class="step-group-kw">Feature:</span> {{.FeatureName}}</div>
         {{if .FeatureBgSteps}}
         <div class="step-group-label"><span class="step-group-kw">Background:</span></div>
         {{range .FeatureBgSteps}}

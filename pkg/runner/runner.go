@@ -106,7 +106,7 @@ func (c *CucumberRunner) Run() error {
 	}
 
 	// Apply config with CLI overrides
-	failFast, useColors, disableLog, disableReporter := c.resolveSettings()
+	failFast, useColors, disableLog, disableReporter, disableWatch := c.resolveSettings()
 
 	// Apply logger from config
 	if c.config != nil && c.config.Logger != nil {
@@ -163,13 +163,13 @@ func (c *CucumberRunner) Run() error {
 
 	reportFile := c.resolveReportFile()
 
-	return c.runWithTestingT(docs, failFast, useColors, disableReporter, reportFile, c.hookExecutor)
+	return c.runWithTestingT(docs, failFast, useColors, disableReporter, disableWatch, reportFile, c.hookExecutor)
 }
 
 // runWithTestingT executes scenarios using t.Run() subtests.
 // Each scenario becomes a Go subtest and calls t.Parallel() so Go's test runner
 // controls concurrency (via go test -parallel N).
-func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool, useColors bool, disableReporter bool, reportFile string, hookExecutor *cacik.HookExecutor) error {
+func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool, useColors bool, disableReporter bool, disableWatch bool, reportFile string, hookExecutor *cacik.HookExecutor) error {
 	runStartedAt := time.Now()
 
 	// Collect all scenarios from filtered documents
@@ -182,6 +182,45 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 	if err := c.resolveAllSteps(scenarios); err != nil {
 		return err
 	}
+
+	// ── Watch server ────────────────────────────────────────────────
+	var broker *cacik.EventBroker
+	var watchServer *cacik.WatchServer
+	if !disableWatch {
+		broker = cacik.NewEventBroker()
+		var err error
+		watchServer, err = cacik.StartWatchServer(broker)
+		if err != nil {
+			// Non-fatal: log and continue without watch
+			fmt.Fprintf(os.Stderr, "Warning: could not start watch server: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stdout, "Watch: %s\n", watchServer.Addr())
+			cacik.OpenBrowser(watchServer.Addr())
+		}
+
+		// Publish run_started with all scenario metadata
+		scenarioMeta := make([]cacik.ScenarioMetadataEvent, len(scenarios))
+		for i, se := range scenarios {
+			tags := extractTagNames(se.Scenario.Tags)
+			scenarioMeta[i] = cacik.ScenarioMetadataEvent{
+				Index:   i,
+				Name:    se.Scenario.Name,
+				Feature: se.FeatureName,
+				Rule:    se.RuleName,
+				Tags:    tags,
+			}
+		}
+		broker.Publish(cacik.EventRunStarted, cacik.RunStartedEvent{
+			Total:     len(scenarios),
+			Scenarios: scenarioMeta,
+		})
+	}
+
+	// Default report file to "report" when watch is active
+	if !disableWatch && reportFile == "" {
+		reportFile = "report.html"
+	}
+	// ────────────────────────────────────────────────────────────────
 
 	// Provide scenario tag sets so BeforeAll/AfterAll can filter tagged hooks
 	allTags := make([][]string, len(scenarios))
@@ -210,6 +249,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 	c.t.Run("all", func(gt *testing.T) {
 		for idx := range scenarios {
 			scenario := &scenarios[idx] // pointer into original slice so writes propagate
+			scenarioIdx := idx
 			testName := scenario.FeatureName + "/" + scenario.Scenario.Name
 			gt.Run(testName, func(st *testing.T) {
 				st.Parallel()
@@ -217,6 +257,22 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 				// Record scenario timing
 				scenario.StartedAt = time.Now()
 				defer func() { scenario.Duration = time.Since(scenario.StartedAt) }()
+
+				// Publish scenario_started event
+				if broker != nil {
+					broker.Publish(cacik.EventScenarioStarted, cacik.ScenarioStartedEvent{Index: scenarioIdx})
+				}
+				// Publish scenario_completed on exit (deferred first = runs last)
+				defer func() {
+					if broker != nil {
+						broker.Publish(cacik.EventScenarioCompleted, cacik.ScenarioCompletedEvent{
+							Index:      scenarioIdx,
+							Passed:     scenario.Passed,
+							Error:      scenario.Error,
+							DurationMs: scenario.Duration.Milliseconds(),
+						})
+					}
+				}()
 
 				// Use buffered reporter per subtest to avoid interleaved output.
 				var reporter *cacik.ConsoleReporter
@@ -229,6 +285,24 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 				// Always merge summary into mainReporter (even when output is disabled,
 				// summary stats are still tracked and needed for RunResult/HTML report).
 				defer mainReporter.MergeSummary(reporter)
+
+				// Helper to publish step events to the watch broker.
+				publishStep := func(rs *executor.ResolvedStep, category string, stepIdx int) {
+					if broker == nil {
+						return
+					}
+					broker.Publish(cacik.EventStepCompleted, cacik.StepCompletedEvent{
+						ScenarioIndex: scenarioIdx,
+						StepCategory:  category,
+						StepIndex:     stepIdx,
+						Keyword:       rs.Keyword,
+						Text:          rs.Text,
+						Status:        rs.Status,
+						Error:         rs.Error,
+						DurationMs:    rs.Duration.Milliseconds(),
+						MatchLocs:     rs.MatchLocs,
+					})
+				}
 
 				// Always print feature header (each subtest has its own buffered reporter)
 				reporter.FeatureStart(scenario.FeatureName)
@@ -274,6 +348,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 							scenarioErr = err
 							scenario.Passed = false
 							scenario.Error = err.Error()
+							publishStep(rs, "feature_bg", i)
 							// Skip remaining background steps
 							for j := i + 1; j < len(scenario.ResolvedFeatureBgSteps); j++ {
 								remaining := scenario.ResolvedFeatureBgSteps[j]
@@ -281,29 +356,33 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 								reporter.StepSkipped(remaining.Keyword, remaining.Text)
 								reportStepDataTable(reporter, remaining.DataTable)
 								reporter.AddStepResult(false, true)
+								publishStep(remaining, "feature_bg", j)
 							}
 							// Print rule header and skip rule bg steps
 							if scenario.RuleName != "" {
 								reporter.RuleStart(scenario.RuleName)
 							}
-							for _, s := range scenario.ResolvedRuleBgSteps {
+							for si, s := range scenario.ResolvedRuleBgSteps {
 								s.Status = "skipped"
 								reporter.StepSkipped(s.Keyword, s.Text)
 								reportStepDataTable(reporter, s.DataTable)
 								reporter.AddStepResult(false, true)
+								publishStep(s, "rule_bg", si)
 							}
 							// Skip scenario steps
 							reporter.ScenarioStart(scenario.Scenario.Name)
-							for _, s := range scenario.ResolvedScenarioSteps {
+							for si, s := range scenario.ResolvedScenarioSteps {
 								s.Status = "skipped"
 								reporter.StepSkipped(s.Keyword, s.Text)
 								reportStepDataTable(reporter, s.DataTable)
 								reporter.AddStepResult(false, true)
+								publishStep(s, "scenario", si)
 							}
 							reporter.AddScenarioResult(false)
 							st.Fatalf("feature background step %q failed: %v", rs.Text, err)
 							return
 						}
+						publishStep(rs, "feature_bg", i)
 					}
 				}
 
@@ -322,6 +401,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 							scenarioErr = err
 							scenario.Passed = false
 							scenario.Error = err.Error()
+							publishStep(rs, "rule_bg", i)
 							// Skip remaining background steps
 							for j := i + 1; j < len(scenario.ResolvedRuleBgSteps); j++ {
 								remaining := scenario.ResolvedRuleBgSteps[j]
@@ -329,19 +409,22 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 								reporter.StepSkipped(remaining.Keyword, remaining.Text)
 								reportStepDataTable(reporter, remaining.DataTable)
 								reporter.AddStepResult(false, true)
+								publishStep(remaining, "rule_bg", j)
 							}
 							// Skip scenario steps
 							reporter.ScenarioStart(scenario.Scenario.Name)
-							for _, s := range scenario.ResolvedScenarioSteps {
+							for si, s := range scenario.ResolvedScenarioSteps {
 								s.Status = "skipped"
 								reporter.StepSkipped(s.Keyword, s.Text)
 								reportStepDataTable(reporter, s.DataTable)
 								reporter.AddStepResult(false, true)
+								publishStep(s, "scenario", si)
 							}
 							reporter.AddScenarioResult(false)
 							st.Fatalf("rule background step %q failed: %v", rs.Text, err)
 							return
 						}
+						publishStep(rs, "rule_bg", i)
 					}
 				}
 
@@ -353,6 +436,7 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 						scenarioErr = err
 						scenario.Passed = false
 						scenario.Error = err.Error()
+						publishStep(rs, "scenario", i)
 						// Skip remaining steps
 						for j := i + 1; j < len(scenario.ResolvedScenarioSteps); j++ {
 							remaining := scenario.ResolvedScenarioSteps[j]
@@ -360,11 +444,13 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 							reporter.StepSkipped(remaining.Keyword, remaining.Text)
 							reportStepDataTable(reporter, remaining.DataTable)
 							reporter.AddStepResult(false, true)
+							publishStep(remaining, "scenario", j)
 						}
 						reporter.AddScenarioResult(false)
 						st.Fatalf("step %q failed: %v", rs.Text, err)
 						return
 					}
+					publishStep(rs, "scenario", i)
 				}
 
 				scenario.Passed = scenarioPassed
@@ -381,11 +467,36 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 	// Build RunResult from scenario execution data
 	runResult := c.buildRunResult(scenarios, mainReporter, runStartedAt)
 
-	// Generate HTML report if configured
+	// Publish run_completed and shutdown watch server
+	if broker != nil {
+		s := runResult.Summary
+		broker.Publish(cacik.EventRunCompleted, cacik.RunCompletedEvent{
+			DurationMs: runResult.Duration.Milliseconds(),
+			Summary: cacik.RunCompletedSummary{
+				ScenariosTotal:  s.ScenariosTotal,
+				ScenariosPassed: s.ScenariosPassed,
+				ScenariosFailed: s.ScenariosFailed,
+				StepsTotal:      s.StepsTotal,
+				StepsPassed:     s.StepsPassed,
+				StepsFailed:     s.StepsFailed,
+				StepsSkipped:    s.StepsSkipped,
+			},
+		})
+	}
+
+	// Generate HTML report (both watch and non-watch paths use the same static report)
 	if reportFile != "" {
 		if err := cacik.GenerateHTMLReport(reportFile, runResult); err != nil {
 			return fmt.Errorf("failed to generate HTML report: %w", err)
 		}
+	}
+
+	// Shutdown watch server after report is written
+	if watchServer != nil {
+		// Grace period so browser receives final events before server dies
+		time.Sleep(2 * time.Second)
+		watchServer.Shutdown(3 * time.Second)
+		broker.Close()
 	}
 
 	// Call AfterRun callback if configured
@@ -398,13 +509,14 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 
 // resolveSettings resolves runtime settings from config and CLI flags.
 // CLI flags always override config values.
-func (c *CucumberRunner) resolveSettings() (failFast bool, useColors bool, disableLog bool, disableReporter bool) {
+func (c *CucumberRunner) resolveSettings() (failFast bool, useColors bool, disableLog bool, disableReporter bool, disableWatch bool) {
 	// Start with config values (if any)
 	if c.config != nil {
 		failFast = c.config.FailFast
 		useColors = !c.config.NoColor
 		disableLog = c.config.DisableLog
 		disableReporter = c.config.DisableReporter
+		disableWatch = c.config.DisableWatch
 	} else {
 		useColors = true // default to colors
 	}
@@ -422,8 +534,11 @@ func (c *CucumberRunner) resolveSettings() (failFast bool, useColors bool, disab
 	if parseDisableReporterFromArgs() {
 		disableReporter = true
 	}
+	if parseDisableWatchFromArgs() {
+		disableWatch = true
+	}
 
-	return failFast, useColors, disableLog, disableReporter
+	return failFast, useColors, disableLog, disableReporter, disableWatch
 }
 
 // parseTagsFromArgs extracts the tag expression from command-line arguments.
@@ -631,6 +746,17 @@ func parseDisableReporterFromArgs() bool {
 	args := os.Args[1:]
 	for _, arg := range args {
 		if arg == "--disable-reporter" {
+			return true
+		}
+	}
+	return false
+}
+
+// parseDisableWatchFromArgs checks if --disable-watch flag is present in command-line arguments.
+func parseDisableWatchFromArgs() bool {
+	args := os.Args[1:]
+	for _, arg := range args {
+		if arg == "--disable-watch" {
 			return true
 		}
 	}

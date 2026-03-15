@@ -30,6 +30,13 @@ type Config struct {
 	// CLI flag --report-file overrides this value.
 	ReportFile string
 
+	// DisableWatch disables the live watch server that starts automatically
+	// on every test run. When true, the server is not started and the browser
+	// is not opened. Static HTML report generation (via ReportFile) still works.
+	// CLI flag --disable-watch overrides this value.
+	// Default: false (watch server is enabled).
+	DisableWatch bool
+
 	// AfterRun is called after all scenarios have executed.
 	// Receives the complete run results for custom reporting.
 	// This callback runs after the HTML report is generated (if configured)

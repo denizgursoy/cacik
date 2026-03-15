@@ -16,10 +16,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// withArgs temporarily sets os.Args for testing and restores it after
+// withArgs temporarily sets os.Args for testing and restores it after.
+// It always inserts --disable-watch right after the program name to avoid
+// starting HTTP servers in tests. Inserting early (rather than appending)
+// prevents it from being mistaken as a value for the last positional flag.
 func withArgs(args []string, fn func()) {
 	oldArgs := os.Args
-	os.Args = args
+	if len(args) > 1 {
+		os.Args = append([]string{args[0], "--disable-watch"}, args[1:]...)
+	} else {
+		os.Args = append(args, "--disable-watch")
+	}
 	defer func() { os.Args = oldArgs }()
 	fn()
 }
