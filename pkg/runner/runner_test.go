@@ -1495,3 +1495,228 @@ func TestCucumberRunner_HTMLReportGeneration(t *testing.T) {
 		require.Contains(t, html, "Successful registration")
 	})
 }
+
+// =============================================================================
+// Tag Inheritance Tests
+// =============================================================================
+
+func Test_prependTags(t *testing.T) {
+	t.Run("prepends parent tags before child tags", func(t *testing.T) {
+		parent := []*messages.Tag{{Name: "@feature"}}
+		child := []*messages.Tag{{Name: "@smoke"}}
+		result := prependTags(parent, child)
+		require.Len(t, result, 2)
+		require.Equal(t, "@feature", result[0].Name)
+		require.Equal(t, "@smoke", result[1].Name)
+	})
+
+	t.Run("returns child when parent is empty", func(t *testing.T) {
+		child := []*messages.Tag{{Name: "@smoke"}}
+		result := prependTags(nil, child)
+		require.Equal(t, child, result)
+	})
+
+	t.Run("returns parent+child when child is empty", func(t *testing.T) {
+		parent := []*messages.Tag{{Name: "@feature"}}
+		result := prependTags(parent, nil)
+		require.Len(t, result, 1)
+		require.Equal(t, "@feature", result[0].Name)
+	})
+}
+
+func Test_collectScenarios_TagInheritance(t *testing.T) {
+	runner := &CucumberRunner{}
+
+	t.Run("feature tags are inherited by scenarios", func(t *testing.T) {
+		docs := []*documentWithFile{
+			{
+				file: "features/login.feature",
+				document: &messages.GherkinDocument{
+					Feature: &messages.Feature{
+						Name: "Login",
+						Tags: []*messages.Tag{{Name: "@feature-tag"}},
+						Children: []*messages.FeatureChild{
+							{
+								Scenario: &messages.Scenario{
+									Name:     "Successful login",
+									Tags:     []*messages.Tag{{Name: "@scenario-tag"}},
+									Steps:    []*messages.Step{{Keyword: "Given ", Text: "a user"}},
+									Location: &messages.Location{Line: 5},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		scenarios := runner.collectScenarios(docs)
+		require.Len(t, scenarios, 1)
+
+		tagNames := extractTagNames(scenarios[0].Scenario.Tags)
+		require.Contains(t, tagNames, "@feature-tag")
+		require.Contains(t, tagNames, "@scenario-tag")
+		// Feature tag comes first
+		require.Equal(t, "@feature-tag", tagNames[0])
+		require.Equal(t, "@scenario-tag", tagNames[1])
+	})
+
+	t.Run("rule tags are inherited by scenarios", func(t *testing.T) {
+		docs := []*documentWithFile{
+			{
+				file: "features/billing.feature",
+				document: &messages.GherkinDocument{
+					Feature: &messages.Feature{
+						Name: "Billing",
+						Tags: []*messages.Tag{{Name: "@feature-tag"}},
+						Children: []*messages.FeatureChild{
+							{
+								Rule: &messages.Rule{
+									Name: "Invoicing",
+									Tags: []*messages.Tag{{Name: "@rule-tag"}},
+									Children: []*messages.RuleChild{
+										{
+											Scenario: &messages.Scenario{
+												Name:     "Generate invoice",
+												Tags:     []*messages.Tag{{Name: "@scenario-tag"}},
+												Steps:    []*messages.Step{{Keyword: "Given ", Text: "an order"}},
+												Location: &messages.Location{Line: 10},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		scenarios := runner.collectScenarios(docs)
+		require.Len(t, scenarios, 1)
+
+		tagNames := extractTagNames(scenarios[0].Scenario.Tags)
+		require.Contains(t, tagNames, "@feature-tag")
+		require.Contains(t, tagNames, "@rule-tag")
+		require.Contains(t, tagNames, "@scenario-tag")
+		// Order: feature, rule, scenario
+		require.Equal(t, "@feature-tag", tagNames[0])
+		require.Equal(t, "@rule-tag", tagNames[1])
+		require.Equal(t, "@scenario-tag", tagNames[2])
+	})
+
+	t.Run("scenario outline inherits feature tags plus examples tags", func(t *testing.T) {
+		docs := []*documentWithFile{
+			{
+				file: "features/outline.feature",
+				document: &messages.GherkinDocument{
+					Feature: &messages.Feature{
+						Name: "Outlines",
+						Tags: []*messages.Tag{{Name: "@feature-tag"}},
+						Children: []*messages.FeatureChild{
+							{
+								Scenario: &messages.Scenario{
+									Name:     "Parameterized",
+									Tags:     []*messages.Tag{{Name: "@outline-tag"}},
+									Steps:    []*messages.Step{{Keyword: "Given ", Text: "value <val>"}},
+									Location: &messages.Location{Line: 5},
+									Examples: []*messages.Examples{
+										{
+											Name: "Set A",
+											Tags: []*messages.Tag{{Name: "@examples-tag"}},
+											TableHeader: &messages.TableRow{
+												Cells: []*messages.TableCell{{Value: "val"}},
+											},
+											TableBody: []*messages.TableRow{
+												{Cells: []*messages.TableCell{{Value: "1"}}},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		scenarios := runner.collectScenarios(docs)
+		require.Len(t, scenarios, 1)
+
+		tagNames := extractTagNames(scenarios[0].Scenario.Tags)
+		// Should have: @feature-tag (inherited), @outline-tag (scenario), @examples-tag (examples)
+		require.Contains(t, tagNames, "@feature-tag")
+		require.Contains(t, tagNames, "@outline-tag")
+		require.Contains(t, tagNames, "@examples-tag")
+		// Feature tag first, then outline+examples (merged by expandScenarioOutline)
+		require.Equal(t, "@feature-tag", tagNames[0])
+	})
+
+	t.Run("untagged feature does not add extra tags", func(t *testing.T) {
+		docs := []*documentWithFile{
+			{
+				file: "features/simple.feature",
+				document: &messages.GherkinDocument{
+					Feature: &messages.Feature{
+						Name: "Simple",
+						Children: []*messages.FeatureChild{
+							{
+								Scenario: &messages.Scenario{
+									Name:     "Basic",
+									Tags:     []*messages.Tag{{Name: "@smoke"}},
+									Steps:    []*messages.Step{{Keyword: "Given ", Text: "something"}},
+									Location: &messages.Location{Line: 3},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		scenarios := runner.collectScenarios(docs)
+		require.Len(t, scenarios, 1)
+
+		tagNames := extractTagNames(scenarios[0].Scenario.Tags)
+		require.Equal(t, []string{"@smoke"}, tagNames)
+	})
+
+	t.Run("feature+rule tags flow into ScenarioFromMessage", func(t *testing.T) {
+		docs := []*documentWithFile{
+			{
+				file: "features/full.feature",
+				document: &messages.GherkinDocument{
+					Feature: &messages.Feature{
+						Name: "Full",
+						Tags: []*messages.Tag{{Name: "@api"}},
+						Children: []*messages.FeatureChild{
+							{
+								Rule: &messages.Rule{
+									Name: "Payments",
+									Tags: []*messages.Tag{{Name: "@payments"}},
+									Children: []*messages.RuleChild{
+										{
+											Scenario: &messages.Scenario{
+												Name:     "Pay by card",
+												Tags:     []*messages.Tag{{Name: "@card"}},
+												Steps:    []*messages.Step{{Keyword: "Given ", Text: "a card"}},
+												Location: &messages.Location{Line: 8},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		scenarios := runner.collectScenarios(docs)
+		require.Len(t, scenarios, 1)
+
+		// Verify that ScenarioFromMessage receives all inherited tags
+		cacikScenario := cacik.ScenarioFromMessage(scenarios[0].Scenario)
+		require.Equal(t, []string{"@api", "@payments", "@card"}, cacikScenario.Tags)
+	})
+}

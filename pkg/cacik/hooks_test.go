@@ -404,3 +404,442 @@ func TestMultipleHooksIntegration(t *testing.T) {
 		require.Equal(t, expected, events)
 	})
 }
+
+// =============================================================================
+// Tagged Hooks Tests
+// =============================================================================
+
+func TestNewHookExecutor_PanicsOnInvalidTagExpression(t *testing.T) {
+	t.Run("invalid tag expression panics", func(t *testing.T) {
+		h := &Hooks{
+			Tags:           "@smoke and and",
+			BeforeScenario: func(s Scenario) {},
+		}
+		require.Panics(t, func() {
+			NewHookExecutor(h)
+		})
+	})
+
+	t.Run("valid tag expression does not panic", func(t *testing.T) {
+		h := &Hooks{
+			Tags:           "@smoke and @fast",
+			BeforeScenario: func(s Scenario) {},
+		}
+		require.NotPanics(t, func() {
+			NewHookExecutor(h)
+		})
+	})
+
+	t.Run("empty tags does not panic", func(t *testing.T) {
+		h := &Hooks{
+			BeforeScenario: func(s Scenario) {},
+		}
+		require.NotPanics(t, func() {
+			NewHookExecutor(h)
+		})
+	})
+}
+
+func TestTaggedBeforeScenario(t *testing.T) {
+	t.Run("hook with @smoke tag fires for @smoke scenario", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:           "@smoke",
+			BeforeScenario: func(s Scenario) { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteBeforeScenario(Scenario{Name: "test", Tags: []string{"@smoke", "@fast"}})
+		require.True(t, called)
+	})
+
+	t.Run("hook with @smoke tag does NOT fire for non-smoke scenario", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:           "@smoke",
+			BeforeScenario: func(s Scenario) { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteBeforeScenario(Scenario{Name: "test", Tags: []string{"@regression"}})
+		require.False(t, called)
+	})
+
+	t.Run("hook with @smoke tag does NOT fire for untagged scenario", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:           "@smoke",
+			BeforeScenario: func(s Scenario) { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteBeforeScenario(Scenario{Name: "test"})
+		require.False(t, called)
+	})
+
+	t.Run("hook with empty Tags fires for all scenarios (backward compat)", func(t *testing.T) {
+		var count int
+		h := &Hooks{
+			BeforeScenario: func(s Scenario) { count++ },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteBeforeScenario(Scenario{Name: "tagged", Tags: []string{"@smoke"}})
+		exec.ExecuteBeforeScenario(Scenario{Name: "untagged"})
+		require.Equal(t, 2, count)
+	})
+
+	t.Run("hook with compound expression @smoke and @fast", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:           "@smoke and @fast",
+			BeforeScenario: func(s Scenario) { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		// Only @smoke — should NOT fire
+		exec.ExecuteBeforeScenario(Scenario{Name: "test", Tags: []string{"@smoke"}})
+		require.False(t, called)
+
+		// Both @smoke and @fast — should fire
+		exec.ExecuteBeforeScenario(Scenario{Name: "test", Tags: []string{"@smoke", "@fast"}})
+		require.True(t, called)
+	})
+
+	t.Run("hook with not @slow", func(t *testing.T) {
+		var count int
+		h := &Hooks{
+			Tags:           "not @slow",
+			BeforeScenario: func(s Scenario) { count++ },
+		}
+		exec := NewHookExecutor(h)
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "fast", Tags: []string{"@smoke"}})
+		require.Equal(t, 1, count) // fires
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "slow", Tags: []string{"@slow"}})
+		require.Equal(t, 1, count) // does NOT fire
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "untagged"})
+		require.Equal(t, 2, count) // fires (no @slow)
+	})
+
+	t.Run("hook with @smoke or @critical", func(t *testing.T) {
+		var count int
+		h := &Hooks{
+			Tags:           "@smoke or @critical",
+			BeforeScenario: func(s Scenario) { count++ },
+		}
+		exec := NewHookExecutor(h)
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "s1", Tags: []string{"@smoke"}})
+		require.Equal(t, 1, count)
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "s2", Tags: []string{"@critical"}})
+		require.Equal(t, 2, count)
+
+		exec.ExecuteBeforeScenario(Scenario{Name: "s3", Tags: []string{"@regression"}})
+		require.Equal(t, 2, count) // does NOT fire
+	})
+}
+
+func TestTaggedAfterScenario(t *testing.T) {
+	t.Run("hook with @smoke tag fires for matching scenario", func(t *testing.T) {
+		var received Scenario
+		h := &Hooks{
+			Tags:          "@smoke",
+			AfterScenario: func(s Scenario, err error) { received = s },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteAfterScenario(Scenario{Name: "match", Tags: []string{"@smoke"}}, nil)
+		require.Equal(t, "match", received.Name)
+	})
+
+	t.Run("hook with @smoke tag skips non-matching scenario", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:          "@smoke",
+			AfterScenario: func(s Scenario, err error) { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.ExecuteAfterScenario(Scenario{Name: "nomatch", Tags: []string{"@regression"}}, nil)
+		require.False(t, called)
+	})
+}
+
+func TestTaggedBeforeStep(t *testing.T) {
+	t.Run("step hooks use scenario tags from SetScenarioTags", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:       "@smoke",
+			BeforeStep: func(s Step) { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		// Set scenario tags to include @smoke
+		exec.SetScenarioTags([]string{"@smoke", "@fast"})
+		exec.ExecuteBeforeStep(Step{Keyword: "Given ", Text: "a user"})
+		require.True(t, called)
+	})
+
+	t.Run("step hooks do NOT fire when scenario tags do not match", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:       "@smoke",
+			BeforeStep: func(s Step) { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		exec.SetScenarioTags([]string{"@regression"})
+		exec.ExecuteBeforeStep(Step{Keyword: "Given ", Text: "a user"})
+		require.False(t, called)
+	})
+
+	t.Run("step hooks fire when no scenario tags set and hook has no tag filter", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			BeforeStep: func(s Step) { called = true },
+		}
+		exec := NewHookExecutor(h)
+		// No SetScenarioTags call — scenarioTags is nil
+		exec.ExecuteBeforeStep(Step{Keyword: "Given ", Text: "a user"})
+		require.True(t, called)
+	})
+}
+
+func TestTaggedAfterStep(t *testing.T) {
+	t.Run("step hooks use scenario tags from SetScenarioTags", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:      "@smoke",
+			AfterStep: func(s Step, err error) { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		exec.SetScenarioTags([]string{"@smoke"})
+		exec.ExecuteAfterStep(Step{Keyword: "Then ", Text: "verify"}, nil)
+		require.True(t, called)
+	})
+
+	t.Run("ClearScenarioTags prevents step hook from firing", func(t *testing.T) {
+		var count int
+		h := &Hooks{
+			Tags:      "@smoke",
+			AfterStep: func(s Step, err error) { count++ },
+		}
+		exec := NewHookExecutor(h)
+
+		exec.SetScenarioTags([]string{"@smoke"})
+		exec.ExecuteAfterStep(Step{Keyword: "Then ", Text: "verify"}, nil)
+		require.Equal(t, 1, count)
+
+		exec.ClearScenarioTags()
+		exec.ExecuteAfterStep(Step{Keyword: "Then ", Text: "verify"}, nil)
+		require.Equal(t, 1, count) // did NOT fire after clear
+	})
+}
+
+func TestBeforeAllAfterAllTagFiltering(t *testing.T) {
+	t.Run("BeforeAll fires when at least one scenario matches tag", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:      "@smoke",
+			BeforeAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.SetAllScenarioTags([][]string{
+			{"@smoke", "@fast"},
+			{"@regression"},
+		})
+		exec.ExecuteBeforeAll()
+		require.True(t, called)
+	})
+
+	t.Run("BeforeAll does NOT fire when no scenario matches tag", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:      "@smoke",
+			BeforeAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.SetAllScenarioTags([][]string{
+			{"@regression"},
+			{"@api"},
+		})
+		exec.ExecuteBeforeAll()
+		require.False(t, called)
+	})
+
+	t.Run("AfterAll fires when at least one scenario matches tag", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:     "@smoke",
+			AfterAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.SetAllScenarioTags([][]string{
+			{"@smoke"},
+		})
+		exec.ExecuteAfterAll()
+		require.True(t, called)
+	})
+
+	t.Run("AfterAll does NOT fire when no scenario matches tag", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:     "@smoke",
+			AfterAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.SetAllScenarioTags([][]string{
+			{"@regression"},
+		})
+		exec.ExecuteAfterAll()
+		require.False(t, called)
+	})
+
+	t.Run("untagged BeforeAll always fires regardless of scenario tags", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			BeforeAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		// No SetAllScenarioTags — allScenarioTags is nil
+		exec.ExecuteBeforeAll()
+		require.True(t, called)
+	})
+
+	t.Run("untagged AfterAll always fires regardless of scenario tags", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			AfterAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+		exec.SetAllScenarioTags([][]string{{"@anything"}})
+		exec.ExecuteAfterAll()
+		require.True(t, called)
+	})
+
+	t.Run("compound tag expression on BeforeAll", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:      "@smoke and @fast",
+			BeforeAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		// No scenario has both @smoke and @fast
+		exec.SetAllScenarioTags([][]string{
+			{"@smoke"},
+			{"@fast"},
+		})
+		exec.ExecuteBeforeAll()
+		require.False(t, called)
+
+		// One scenario has both
+		exec.SetAllScenarioTags([][]string{
+			{"@smoke", "@fast"},
+			{"@regression"},
+		})
+		exec.ExecuteBeforeAll()
+		require.True(t, called)
+	})
+
+	t.Run("not expression on BeforeAll", func(t *testing.T) {
+		var called bool
+		h := &Hooks{
+			Tags:      "not @slow",
+			BeforeAll: func() { called = true },
+		}
+		exec := NewHookExecutor(h)
+
+		// All scenarios are @slow
+		exec.SetAllScenarioTags([][]string{
+			{"@slow"},
+			{"@slow", "@regression"},
+		})
+		exec.ExecuteBeforeAll()
+		require.False(t, called)
+
+		// One scenario is not @slow
+		exec.SetAllScenarioTags([][]string{
+			{"@slow"},
+			{"@fast"},
+		})
+		exec.ExecuteBeforeAll()
+		require.True(t, called)
+	})
+}
+
+func TestTaggedHooksIntegration(t *testing.T) {
+	t.Run("mixed tagged and untagged hooks with multiple scenarios", func(t *testing.T) {
+		var events []string
+
+		smokeHook := &Hooks{
+			Order: 1,
+			Tags:  "@smoke",
+			BeforeScenario: func(s Scenario) {
+				events = append(events, "smoke:beforeScenario:"+s.Name)
+			},
+			AfterScenario: func(s Scenario, err error) {
+				events = append(events, "smoke:afterScenario:"+s.Name)
+			},
+			BeforeStep: func(s Step) {
+				events = append(events, "smoke:beforeStep")
+			},
+			AfterStep: func(s Step, err error) {
+				events = append(events, "smoke:afterStep")
+			},
+		}
+
+		globalHook := &Hooks{
+			Order: 2,
+			BeforeScenario: func(s Scenario) {
+				events = append(events, "global:beforeScenario:"+s.Name)
+			},
+			AfterScenario: func(s Scenario, err error) {
+				events = append(events, "global:afterScenario:"+s.Name)
+			},
+			BeforeStep: func(s Step) {
+				events = append(events, "global:beforeStep")
+			},
+			AfterStep: func(s Step, err error) {
+				events = append(events, "global:afterStep")
+			},
+		}
+
+		exec := NewHookExecutor(smokeHook, globalHook)
+
+		// Scenario 1: has @smoke — both hooks fire
+		smokeScenario := Scenario{Name: "S1", Tags: []string{"@smoke"}}
+		exec.SetScenarioTags(smokeScenario.Tags)
+		exec.ExecuteBeforeScenario(smokeScenario)
+		exec.ExecuteBeforeStep(Step{Keyword: "Given ", Text: "step1"})
+		exec.ExecuteAfterStep(Step{Keyword: "Given ", Text: "step1"}, nil)
+		exec.ExecuteAfterScenario(smokeScenario, nil)
+		exec.ClearScenarioTags()
+
+		// Scenario 2: no @smoke — only global hook fires
+		regressionScenario := Scenario{Name: "S2", Tags: []string{"@regression"}}
+		exec.SetScenarioTags(regressionScenario.Tags)
+		exec.ExecuteBeforeScenario(regressionScenario)
+		exec.ExecuteBeforeStep(Step{Keyword: "When ", Text: "step2"})
+		exec.ExecuteAfterStep(Step{Keyword: "When ", Text: "step2"}, nil)
+		exec.ExecuteAfterScenario(regressionScenario, nil)
+		exec.ClearScenarioTags()
+
+		expected := []string{
+			// S1 (@smoke) — both hooks
+			"smoke:beforeScenario:S1",
+			"global:beforeScenario:S1",
+			"smoke:beforeStep",
+			"global:beforeStep",
+			"smoke:afterStep",
+			"global:afterStep",
+			"smoke:afterScenario:S1",
+			"global:afterScenario:S1",
+			// S2 (@regression) — only global
+			"global:beforeScenario:S2",
+			"global:beforeStep",
+			"global:afterStep",
+			"global:afterScenario:S2",
+		}
+		require.Equal(t, expected, events)
+	})
+}

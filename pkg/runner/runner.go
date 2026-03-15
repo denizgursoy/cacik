@@ -121,12 +121,6 @@ func (c *CucumberRunner) Run() error {
 	// Create hook executor
 	c.hookExecutor = cacik.NewHookExecutor(c.hooks...)
 
-	// Execute BeforeAll hooks
-	c.hookExecutor.ExecuteBeforeAll()
-
-	// Ensure AfterAll hooks run even on error
-	defer c.hookExecutor.ExecuteAfterAll()
-
 	// Parse tag expression from CLI arguments
 	tagExpr := parseTagsFromArgs()
 	var evaluator tagexpressions.Evaluatable
@@ -189,6 +183,18 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 		return err
 	}
 
+	// Provide scenario tag sets so BeforeAll/AfterAll can filter tagged hooks
+	allTags := make([][]string, len(scenarios))
+	for i, se := range scenarios {
+		allTags[i] = extractTagNames(se.Scenario.Tags)
+	}
+	hookExecutor.SetAllScenarioTags(allTags)
+
+	// Execute BeforeAll hooks (after scenarios are known, so tag filtering works)
+	hookExecutor.ExecuteBeforeAll()
+	// Ensure AfterAll hooks run even on error
+	defer hookExecutor.ExecuteAfterAll()
+
 	// Create main reporter for summary aggregation
 	var mainReporter *cacik.ConsoleReporter
 	if disableReporter {
@@ -244,14 +250,16 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 				cacikScenario := cacik.ScenarioFromMessage(scenario.Scenario)
 				var scenarioErr error
 
-				// Execute BeforeScenario hooks
+				// Set scenario tags for step-level hook filtering, then execute BeforeScenario hooks
 				if hookExecutor != nil {
+					hookExecutor.SetScenarioTags(cacikScenario.Tags)
 					hookExecutor.ExecuteBeforeScenario(cacikScenario)
 				}
-				// Ensure AfterScenario hooks always run
+				// Ensure AfterScenario hooks always run, then clear scenario tags
 				defer func() {
 					if hookExecutor != nil {
 						hookExecutor.ExecuteAfterScenario(cacikScenario, scenarioErr)
+						hookExecutor.ClearScenarioTags()
 					}
 				}()
 
@@ -521,6 +529,18 @@ func extractTagNames(tags []*messages.Tag) []string {
 	return names
 }
 
+// prependTags prepends parent *messages.Tag entries before child tags.
+// Used by collectScenarios to inherit Feature/Rule tags onto scenarios.
+func prependTags(parent, child []*messages.Tag) []*messages.Tag {
+	if len(parent) == 0 {
+		return child
+	}
+	result := make([]*messages.Tag, 0, len(parent)+len(child))
+	result = append(result, parent...)
+	result = append(result, child...)
+	return result
+}
+
 // mergeTags combines parent and child tags into a single slice.
 func mergeTags(parent, child []string) []string {
 	result := make([]string, 0, len(parent)+len(child))
@@ -753,6 +773,8 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 				featureBackground = child.Background
 			} else if child.Scenario != nil {
 				for _, expanded := range expandScenarioOutline(child.Scenario) {
+					// Prepend feature tags so hooks and reports see inherited tags
+					expanded.Tags = prependTags(doc.Feature.Tags, expanded.Tags)
 					scenarios = append(scenarios, ScenarioExecution{
 						Scenario:          expanded,
 						FeatureBackground: featureBackground,
@@ -767,6 +789,8 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 						ruleBackground = rc.Background
 					} else if rc.Scenario != nil {
 						for _, expanded := range expandScenarioOutline(rc.Scenario) {
+							// Prepend feature + rule tags so hooks and reports see inherited tags
+							expanded.Tags = prependTags(doc.Feature.Tags, prependTags(child.Rule.Tags, expanded.Tags))
 							scenarios = append(scenarios, ScenarioExecution{
 								Scenario:          expanded,
 								FeatureBackground: featureBackground,

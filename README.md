@@ -1162,7 +1162,7 @@ Scenario and step hooks receive metadata about the currently executing scenario 
 // cacik.Scenario — passed to BeforeScenario/AfterScenario
 type Scenario struct {
     Name        string   // Scenario name (e.g. "User login")
-    Tags        []string // Tags including inherited (e.g. "@smoke", "@auth")
+    Tags        []string // Tags including inherited from Feature, Rule, and Examples
     Description string   // Optional description text
     Keyword     string   // "Scenario" or "Scenario Outline"
     Line        int64    // Source file line number
@@ -1204,9 +1204,45 @@ AfterScenario: func(s cacik.Scenario, err error) {
 | Field | Type | Description |
 |-------|------|-------------|
 | `Order` | `int` | Execution order (lower = first, default: 0) |
-| `BeforeAll` | `func()` | Runs once before all scenarios |
-| `AfterAll` | `func()` | Runs once after all scenarios |
-| `BeforeScenario` | `func(Scenario)` | Runs before each scenario |
-| `AfterScenario` | `func(Scenario, error)` | Runs after each scenario (always runs; error is nil on success) |
-| `BeforeStep` | `func(Step)` | Runs before each step |
-| `AfterStep` | `func(Step, error)` | Runs after each step (error is nil on success) |
+| `Tags` | `string` | Optional Cucumber tag expression — filters `BeforeScenario`, `AfterScenario`, `BeforeStep`, `AfterStep` |
+| `BeforeAll` | `func()` | Runs once before all scenarios (fires only if at least one scenario matches `Tags`) |
+| `AfterAll` | `func()` | Runs once after all scenarios (fires only if at least one scenario matches `Tags`) |
+| `BeforeScenario` | `func(Scenario)` | Runs before each matching scenario |
+| `AfterScenario` | `func(Scenario, error)` | Runs after each matching scenario (always runs; error is nil on success) |
+| `BeforeStep` | `func(Step)` | Runs before each step in matching scenarios |
+| `AfterStep` | `func(Step, error)` | Runs after each step in matching scenarios (error is nil on success) |
+
+### Tagged Hooks
+
+When `Tags` is set, the hook only fires for scenarios whose tags match the expression. The tag expression uses the standard Cucumber tag expression syntax (`@tag`, `and`, `or`, `not`, parentheses).
+
+When `Tags` is set, `BeforeAll` and `AfterAll` are also filtered — they fire only if at least one scenario in the run matches the tag expression. If no scenarios match, the hook is skipped entirely.
+
+Scenario tags include inherited tags from the Feature and Rule levels, so a hook with `Tags: "@api"` will fire for any scenario under a feature tagged `@api`.
+
+```go
+// SmokeHooks only fires for scenarios tagged @smoke
+func SmokeHooks() *cacik.Hooks {
+	return &cacik.Hooks{
+		Tags: "@smoke",
+		BeforeScenario: func(s cacik.Scenario) {
+			// Setup specific to smoke tests
+		},
+		AfterScenario: func(s cacik.Scenario, err error) {
+			// Cleanup specific to smoke tests
+		},
+	}
+}
+```
+
+Tag expressions support boolean logic:
+
+```go
+Tags: "@smoke"                // matches @smoke
+Tags: "@smoke and @fast"      // requires both
+Tags: "@smoke or @critical"   // matches either
+Tags: "not @slow"             // excludes @slow
+Tags: "(@smoke or @ui) and not @slow"  // compound expression
+```
+
+Invalid tag expressions cause a **panic** at hook creation time, so syntax errors are caught immediately.

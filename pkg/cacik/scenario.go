@@ -11,8 +11,9 @@ type Scenario struct {
 	Name string
 
 	// Tags contains the tag names attached to this scenario
-	// (e.g. "@smoke", "@wip"). Includes tags inherited from the Feature
-	// or Examples block.
+	// (e.g. "@smoke", "@wip"). Includes tags inherited from the Feature,
+	// Rule, and Examples blocks — in that order, followed by the scenario's
+	// own tags.
 	Tags []string
 
 	// Description is the optional free-text description below the
