@@ -2,8 +2,10 @@ package runner
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -258,22 +260,6 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 				scenario.StartedAt = time.Now()
 				defer func() { scenario.Duration = time.Since(scenario.StartedAt) }()
 
-				// Publish scenario_started event
-				if broker != nil {
-					broker.Publish(cacik.EventScenarioStarted, cacik.ScenarioStartedEvent{Index: scenarioIdx})
-				}
-				// Publish scenario_completed on exit (deferred first = runs last)
-				defer func() {
-					if broker != nil {
-						broker.Publish(cacik.EventScenarioCompleted, cacik.ScenarioCompletedEvent{
-							Index:      scenarioIdx,
-							Passed:     scenario.Passed,
-							Error:      scenario.Error,
-							DurationMs: scenario.Duration.Milliseconds(),
-						})
-					}
-				}()
-
 				// Use buffered reporter per subtest to avoid interleaved output.
 				var reporter *cacik.ConsoleReporter
 				if disableReporter {
@@ -286,12 +272,54 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 				// summary stats are still tracked and needed for RunResult/HTML report).
 				defer mainReporter.MergeSummary(reporter)
 
+				// Always print feature header (each subtest has its own buffered reporter)
+				reporter.FeatureStart(scenario.FeatureName)
+
+				// Create fresh context for this scenario with the subtest's *testing.T
+				opts := make([]cacik.Option, 0)
+				var capLogger *cacik.CapturingLogger
+				if c.logger != nil {
+					capLogger = cacik.NewCapturingLogger(c.logger)
+				} else {
+					capLogger = cacik.NewCapturingLogger(nil)
+				}
+				opts = append(opts, cacik.WithLogger(capLogger))
+				opts = append(opts, cacik.WithTestingT(st))
+				opts = append(opts, cacik.WithReporter(reporter))
+				ctx := cacik.New(opts...)
+
+				// Store the scenario UUID for events and result building.
+				scenario.ContextID = ctx.ID()
+
+				// Publish scenario_started event
+				if broker != nil {
+					broker.Publish(cacik.EventScenarioStarted, cacik.ScenarioStartedEvent{
+						Index: scenarioIdx,
+						ID:    ctx.ID(),
+					})
+				}
+				// Publish scenario_completed on exit (deferred first = runs last)
+				defer func() {
+					// Store captured logs for buildRunResult
+					scenario.CapturedLogs = capLogger.Entries()
+					if broker != nil {
+						broker.Publish(cacik.EventScenarioCompleted, cacik.ScenarioCompletedEvent{
+							Index:      scenarioIdx,
+							Passed:     scenario.Passed,
+							Error:      scenario.Error,
+							DurationMs: scenario.Duration.Milliseconds(),
+							ID:         ctx.ID(),
+							Logs:       logEntriesToJSON(capLogger.Entries()),
+						})
+					}
+				}()
+
 				// Helper to publish step events to the watch broker.
 				publishStep := func(rs *executor.ResolvedStep, category string, stepIdx int) {
 					if broker == nil {
 						return
 					}
-					broker.Publish(cacik.EventStepCompleted, cacik.StepCompletedEvent{
+					evt := cacik.StepCompletedEvent{
 						ScenarioIndex: scenarioIdx,
 						StepCategory:  category,
 						StepIndex:     stepIdx,
@@ -301,20 +329,11 @@ func (c *CucumberRunner) runWithTestingT(docs []*documentWithFile, failFast bool
 						Error:         rs.Error,
 						DurationMs:    rs.Duration.Milliseconds(),
 						MatchLocs:     rs.MatchLocs,
-					})
+						DataTable:     dataTableFromMessages(rs.DataTable),
+						DataSnapshot:  formatDataSnapshot(ctx.Data().Snapshot()),
+					}
+					broker.Publish(cacik.EventStepCompleted, evt)
 				}
-
-				// Always print feature header (each subtest has its own buffered reporter)
-				reporter.FeatureStart(scenario.FeatureName)
-
-				// Create fresh context for this scenario with the subtest's *testing.T
-				opts := make([]cacik.Option, 0)
-				if c.logger != nil {
-					opts = append(opts, cacik.WithLogger(c.logger))
-				}
-				opts = append(opts, cacik.WithTestingT(st))
-				opts = append(opts, cacik.WithReporter(reporter))
-				ctx := cacik.New(opts...)
 
 				// Clone executor and set context
 				isolatedExec := c.executor.Clone()
@@ -707,10 +726,12 @@ type ScenarioExecution struct {
 	ResolvedRuleBgSteps    []*executor.ResolvedStep
 	ResolvedScenarioSteps  []*executor.ResolvedStep
 	// Execution outcome (populated during runWithTestingT)
-	StartedAt time.Time
-	Duration  time.Duration
-	Passed    bool
-	Error     string
+	StartedAt    time.Time
+	Duration     time.Duration
+	Passed       bool
+	Error        string
+	ContextID    string           // scenario UUID from ctx.ID()
+	CapturedLogs []cacik.LogEntry // captured log entries from CapturingLogger
 }
 
 // documentWithFile pairs a parsed document with its source file path
@@ -834,6 +855,7 @@ func (c *CucumberRunner) buildRunResult(scenarios []ScenarioExecution, reporter 
 		}
 
 		scenarioResults = append(scenarioResults, cacik.ScenarioResult{
+			ID:             se.ContextID,
 			FeatureName:    se.FeatureName,
 			RuleName:       se.RuleName,
 			Name:           se.Scenario.Name,
@@ -845,6 +867,7 @@ func (c *CucumberRunner) buildRunResult(scenarios []ScenarioExecution, reporter 
 			FeatureBgSteps: featureBgSteps,
 			RuleBgSteps:    ruleBgSteps,
 			Steps:          steps,
+			Logs:           se.CapturedLogs,
 		})
 	}
 
@@ -878,6 +901,7 @@ func resolvedStepToResult(rs *executor.ResolvedStep) cacik.StepResult {
 		Duration:  rs.Duration,
 		StartedAt: rs.StartedAt,
 		MatchLocs: rs.MatchLocs,
+		DataTable: dataTableFromMessages(rs.DataTable),
 	}
 }
 
@@ -1095,4 +1119,69 @@ func reportStepDataTable(reporter cacik.Reporter, dt *messages.DataTable) {
 		rows = append(rows, cells)
 	}
 	reporter.StepDataTable(rows)
+}
+
+// dataTableFromMessages converts a *messages.DataTable to [][]string.
+// Returns nil if dt is nil.
+func dataTableFromMessages(dt *messages.DataTable) [][]string {
+	if dt == nil {
+		return nil
+	}
+	rows := make([][]string, 0, len(dt.Rows))
+	for _, row := range dt.Rows {
+		cells := make([]string, 0, len(row.Cells))
+		for _, cell := range row.Cells {
+			cells = append(cells, cell.Value)
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
+
+// formatDataSnapshot converts a ctx.Data().Snapshot() map to a map[string]string
+// with smart formatting: simple types use fmt.Sprintf("%v"), complex types use JSON.
+func formatDataSnapshot(snap map[string]any) map[string]string {
+	if len(snap) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(snap))
+	for k, v := range snap {
+		out[k] = formatValue(v)
+	}
+	return out
+}
+
+// formatValue formats a single value for display. Simple scalar types use
+// fmt.Sprintf("%v"); complex types (maps, slices, structs) are JSON-marshaled.
+func formatValue(v any) string {
+	if v == nil {
+		return "<nil>"
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Ptr:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+// logEntriesToJSON converts []cacik.LogEntry to []cacik.LogEntryJSON for SSE events.
+func logEntriesToJSON(entries []cacik.LogEntry) []cacik.LogEntryJSON {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]cacik.LogEntryJSON, len(entries))
+	for i, e := range entries {
+		out[i] = cacik.LogEntryJSON{
+			Level:   e.Level,
+			Message: e.Message,
+			Args:    e.Args,
+		}
+	}
+	return out
 }

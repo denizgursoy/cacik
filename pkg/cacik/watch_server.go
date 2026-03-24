@@ -42,28 +42,40 @@ type ScenarioMetadataEvent struct {
 
 // ScenarioStartedEvent is the payload for EventScenarioStarted.
 type ScenarioStartedEvent struct {
-	Index int `json:"index"`
+	Index int    `json:"index"`
+	ID    string `json:"id"` // scenario UUID from ctx.ID()
 }
 
 // StepCompletedEvent is the payload for EventStepCompleted.
 type StepCompletedEvent struct {
-	ScenarioIndex int    `json:"scenario_index"`
-	StepCategory  string `json:"step_category"` // "feature_bg", "rule_bg", "scenario"
-	StepIndex     int    `json:"step_index"`
-	Keyword       string `json:"keyword"`
-	Text          string `json:"text"`
-	Status        string `json:"status"` // "passed", "failed", "skipped"
-	Error         string `json:"error"`
-	DurationMs    int64  `json:"duration_ms"`
-	MatchLocs     []int  `json:"match_locs"`
+	ScenarioIndex int               `json:"scenario_index"`
+	StepCategory  string            `json:"step_category"` // "feature_bg", "rule_bg", "scenario"
+	StepIndex     int               `json:"step_index"`
+	Keyword       string            `json:"keyword"`
+	Text          string            `json:"text"`
+	Status        string            `json:"status"` // "passed", "failed", "skipped"
+	Error         string            `json:"error"`
+	DurationMs    int64             `json:"duration_ms"`
+	MatchLocs     []int             `json:"match_locs"`
+	DataTable     [][]string        `json:"data_table,omitempty"`    // DataTable rows (if the step has one)
+	DataSnapshot  map[string]string `json:"data_snapshot,omitempty"` // ctx.Data() snapshot after step
+}
+
+// LogEntryJSON is the JSON-friendly representation of a log entry for SSE events.
+type LogEntryJSON struct {
+	Level   string `json:"level"`
+	Message string `json:"message"`
+	Args    string `json:"args"`
 }
 
 // ScenarioCompletedEvent is the payload for EventScenarioCompleted.
 type ScenarioCompletedEvent struct {
-	Index      int    `json:"index"`
-	Passed     bool   `json:"passed"`
-	Error      string `json:"error"`
-	DurationMs int64  `json:"duration_ms"`
+	Index      int            `json:"index"`
+	Passed     bool           `json:"passed"`
+	Error      string         `json:"error"`
+	DurationMs int64          `json:"duration_ms"`
+	ID         string         `json:"id"`             // scenario UUID
+	Logs       []LogEntryJSON `json:"logs,omitempty"` // captured log entries
 }
 
 // RunCompletedEvent is the payload for EventRunCompleted.
@@ -463,6 +475,83 @@ const liveHTMLPage = `<!DOCTYPE html>
   .chevron { transition: transform 0.2s; font-size: 0.7rem; color: #adb5bd; }
   .scenario.open .chevron { transform: rotate(90deg); }
 
+  /* ---- Tabs inside dark block ---- */
+  .tab-bar {
+    display: flex; gap: 0.35rem; padding: 0 0 0.4rem 0;
+    border-bottom: 1px solid #2a2b2e; margin-bottom: 0.4rem;
+  }
+  .tab-pill {
+    font-size: 0.72rem; padding: 0.2rem 0.6rem; border-radius: 10px;
+    border: none; cursor: pointer; font-weight: 500;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: transparent; color: #6F737A; transition: all 0.15s;
+  }
+  .tab-pill:hover { color: #BCBEC4; }
+  .tab-pill.active { background: #3574f0; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ---- Inline DataTable (inside Steps tab) ---- */
+  .step-datatable {
+    margin: 0.15rem 0 0.3rem 1.7rem;
+    border-collapse: collapse;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem;
+  }
+  .step-datatable td, .step-datatable th {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid #3a3b3e;
+    background: #2a2b2e;
+  }
+  .step-datatable th {
+    color: #CF8E6D; font-weight: 600;
+  }
+  .step-datatable td {
+    color: #BCBEC4;
+  }
+
+  /* ---- Data tab ---- */
+  .data-table {
+    border-collapse: collapse; width: 100%;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem;
+  }
+  .data-table th {
+    text-align: left; color: #6F737A; font-weight: 500;
+    padding: 0.2rem 0.5rem; border-bottom: 1px solid #3a3b3e;
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .data-table td {
+    padding: 0.2rem 0.5rem; border-bottom: 1px solid #2a2b2e;
+  }
+  .data-table .data-key { color: #CF8E6D; }
+  .data-table .data-val { color: #BCBEC4; word-break: break-all; }
+
+  /* ---- Logs tab ---- */
+  .log-line {
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem; padding: 0.1rem 0; white-space: pre-wrap;
+  }
+  .log-level { font-weight: 600; }
+  .log-level-DEBUG { color: #6F737A; }
+  .log-level-INFO  { color: #BCBEC4; }
+  .log-level-WARN  { color: #e6b800; }
+  .log-level-ERROR { color: #ff4444; }
+  .log-msg { color: #BCBEC4; }
+  .log-args { color: #6F737A; }
+
+  .empty-tab-msg {
+    color: #6F737A;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem; font-style: italic; padding: 0.5rem 0;
+  }
+
+  /* ---- Scenario UUID subtitle ---- */
+  .scenario-uuid {
+    font-size: 0.68rem; color: #868e96; font-weight: 400;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+  }
+
   .empty-msg { color: #868e96; font-style: italic; padding: 1rem 0; text-align: center; }
 
   @media (max-width: 600px) {
@@ -529,6 +618,11 @@ const liveHTMLPage = `<!DOCTYPE html>
       card.className = 'scenario running';
       card.classList.add('open');
     }
+    // Show UUID subtitle
+    if (data.id) {
+      var uuidEl = document.getElementById('uuid-' + data.index);
+      if (uuidEl) uuidEl.textContent = data.id;
+    }
   });
 
   es.addEventListener('step_completed', function(e) {
@@ -554,6 +648,12 @@ const liveHTMLPage = `<!DOCTYPE html>
     // Update summary
     if (data.passed) { summary.scenariosPassed++; } else { summary.scenariosFailed++; }
     updateSummaryDOM();
+    // Populate Logs tab
+    if (data.logs && data.logs.length > 0) {
+      updateLogsTab(data.index, data.logs);
+    }
+    // Show tab bar if Data or Logs have content
+    showTabBarIfNeeded(data.index);
   });
 
   es.addEventListener('run_completed', function(e) {
@@ -654,22 +754,32 @@ const liveHTMLPage = `<!DOCTYPE html>
       '<div class="scenario-header" onclick="this.parentElement.classList.toggle(\'open\')">' +
         '<div>' +
           '<span class="scenario-name">' + escapeHtml(s.name) + '</span> ' + tagsHtml +
+          '<div class="scenario-uuid" id="uuid-' + s.index + '"></div>' +
         '</div>' +
         '<div class="scenario-meta">' +
           '<span class="scenario-duration">-</span>' +
           '<span class="chevron">&#9654;</span>' +
         '</div>' +
       '</div>' +
-      '<div class="steps" id="steps-' + s.index + '"></div>';
+      '<div class="steps" id="steps-' + s.index + '">' +
+        '<div class="tab-bar" id="tabbar-' + s.index + '" style="display:none">' +
+          '<button class="tab-pill active" onclick="switchTab(' + s.index + ',\'steps\',this)">Steps</button>' +
+          '<button class="tab-pill" onclick="switchTab(' + s.index + ',\'data\',this)">Data</button>' +
+          '<button class="tab-pill" onclick="switchTab(' + s.index + ',\'logs\',this)">Logs</button>' +
+        '</div>' +
+        '<div class="tab-panel active" id="panel-steps-' + s.index + '"></div>' +
+        '<div class="tab-panel" id="panel-data-' + s.index + '"><div class="empty-tab-msg">No data stored</div></div>' +
+        '<div class="tab-panel" id="panel-logs-' + s.index + '"><div class="empty-tab-msg">No logs captured</div></div>' +
+      '</div>';
 
     return card;
   }
 
   function appendStep(data) {
-    var stepsDiv = document.getElementById('steps-' + data.scenario_index);
-    if (!stepsDiv) return;
+    var stepsPanel = document.getElementById('panel-steps-' + data.scenario_index);
+    if (!stepsPanel) return;
 
-    // Inject Feature: label as the very first element in the steps block
+    // Inject Feature: label as the very first element in the steps panel
     var featureLabelId = 'label-' + data.scenario_index + '-feature';
     if (!document.getElementById(featureLabelId)) {
       var sInfo = scenarios[data.scenario_index];
@@ -677,7 +787,7 @@ const liveHTMLPage = `<!DOCTYPE html>
       fl.id = featureLabelId;
       fl.className = 'step-group-label';
       fl.innerHTML = '<span class="step-group-kw">Feature:</span> ' + escapeHtml(sInfo ? sInfo.feature : '');
-      stepsDiv.appendChild(fl);
+      stepsPanel.appendChild(fl);
     }
 
     // Add group label if this is the first step in a category
@@ -692,7 +802,7 @@ const liveHTMLPage = `<!DOCTYPE html>
           rl.id = ruleLabelId;
           rl.className = 'step-group-label step-group-rule';
           rl.innerHTML = '<span class="step-group-kw">Rule:</span> ' + escapeHtml(sInfo ? sInfo.rule : '');
-          stepsDiv.appendChild(rl);
+          stepsPanel.appendChild(rl);
         }
       }
 
@@ -714,13 +824,13 @@ const liveHTMLPage = `<!DOCTYPE html>
             rl.id = ruleLabelId;
             rl.className = 'step-group-label step-group-rule';
             rl.innerHTML = '<span class="step-group-kw">Rule:</span> ' + escapeHtml(sInfo.rule);
-            stepsDiv.appendChild(rl);
+            stepsPanel.appendChild(rl);
           }
         }
         label.className += ' step-group-scenario';
         label.innerHTML = '<span class="step-group-kw">Scenario:</span> ' + escapeHtml(sInfo ? sInfo.name : '');
       }
-      stepsDiv.appendChild(label);
+      stepsPanel.appendChild(label);
     }
 
     var sym = data.status === 'passed' ? '\u2713' : (data.status === 'failed' ? '\u2717' : '\u2013');
@@ -734,13 +844,23 @@ const liveHTMLPage = `<!DOCTYPE html>
       colorizeText(data.text, data.match_locs, data.status) +
       '<span class="step-duration">' + formatDuration(data.duration_ms) + '</span>';
 
-    stepsDiv.appendChild(stepDiv);
+    stepsPanel.appendChild(stepDiv);
 
     if (data.error) {
       var errDiv = document.createElement('div');
       errDiv.className = 'step-error';
       errDiv.textContent = data.error;
-      stepsDiv.appendChild(errDiv);
+      stepsPanel.appendChild(errDiv);
+    }
+
+    // Render inline DataTable if present
+    if (data.data_table && data.data_table.length > 0) {
+      stepsPanel.appendChild(buildInlineDataTable(data.data_table));
+    }
+
+    // Update Data tab with latest snapshot
+    if (data.data_snapshot && Object.keys(data.data_snapshot).length > 0) {
+      updateDataTab(data.scenario_index, data.data_snapshot);
     }
   }
 
@@ -892,7 +1012,86 @@ const liveHTMLPage = `<!DOCTYPE html>
       s.style.display = any ? '' : 'none';
     });
   }
+
+  // ---- Inline DataTable builder ----
+  function buildInlineDataTable(rows) {
+    var table = document.createElement('table');
+    table.className = 'step-datatable';
+    for (var r = 0; r < rows.length; r++) {
+      var tr = document.createElement('tr');
+      for (var c = 0; c < rows[r].length; c++) {
+        var cell = document.createElement(r === 0 ? 'th' : 'td');
+        cell.textContent = rows[r][c];
+        tr.appendChild(cell);
+      }
+      table.appendChild(tr);
+    }
+    return table;
+  }
+
+  // ---- Data tab update ----
+  function updateDataTab(scenarioIdx, snapshot) {
+    var panel = document.getElementById('panel-data-' + scenarioIdx);
+    if (!panel) return;
+    var keys = Object.keys(snapshot).sort();
+    var html = '<table class="data-table"><tr><th>Key</th><th>Value</th></tr>';
+    for (var i = 0; i < keys.length; i++) {
+      html += '<tr><td class="data-key">' + escapeHtml(keys[i]) + '</td>' +
+              '<td class="data-val">' + escapeHtml(snapshot[keys[i]]) + '</td></tr>';
+    }
+    html += '</table>';
+    panel.innerHTML = html;
+    // Show tab bar since data exists
+    showTabBarIfNeeded(scenarioIdx);
+  }
+
+  // ---- Logs tab update ----
+  function updateLogsTab(scenarioIdx, logs) {
+    var panel = document.getElementById('panel-logs-' + scenarioIdx);
+    if (!panel) return;
+    var html = '';
+    for (var i = 0; i < logs.length; i++) {
+      var l = logs[i];
+      html += '<div class="log-line">' +
+        '<span class="log-level log-level-' + escapeHtml(l.level) + '">[' + escapeHtml(l.level) + ']</span> ' +
+        '<span class="log-msg">' + escapeHtml(l.message) + '</span>' +
+        (l.args ? ' <span class="log-args">' + escapeHtml(l.args) + '</span>' : '') +
+        '</div>';
+    }
+    panel.innerHTML = html;
+  }
+
+  // ---- Tab bar visibility ----
+  function showTabBarIfNeeded(scenarioIdx) {
+    var dataPanel = document.getElementById('panel-data-' + scenarioIdx);
+    var logsPanel = document.getElementById('panel-logs-' + scenarioIdx);
+    var hasData = dataPanel && !dataPanel.querySelector('.empty-tab-msg');
+    var hasLogs = logsPanel && !logsPanel.querySelector('.empty-tab-msg');
+    if (hasData || hasLogs) {
+      var tabBar = document.getElementById('tabbar-' + scenarioIdx);
+      if (tabBar) tabBar.style.display = 'flex';
+    }
+  }
+
 })();
+
+// ---- Tab switching (global scope for onclick) ----
+function switchTab(scenarioIdx, tabName, btn) {
+  // Deactivate all pills in this tab bar
+  var tabBar = document.getElementById('tabbar-' + scenarioIdx);
+  if (tabBar) {
+    tabBar.querySelectorAll('.tab-pill').forEach(function(p) { p.classList.remove('active'); });
+  }
+  btn.classList.add('active');
+  // Hide all panels, show the selected one
+  var panels = ['steps', 'data', 'logs'];
+  for (var i = 0; i < panels.length; i++) {
+    var p = document.getElementById('panel-' + panels[i] + '-' + scenarioIdx);
+    if (p) {
+      if (panels[i] === tabName) { p.classList.add('active'); } else { p.classList.remove('active'); }
+    }
+  }
+}
 
 // ---- Global expand/collapse ----
 function expandAll() { document.querySelectorAll('.scenario').forEach(function(el) { el.classList.add('open'); }); }

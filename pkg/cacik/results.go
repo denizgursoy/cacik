@@ -53,10 +53,23 @@ type StepResult struct {
 	// group within Text (same format as regexp.FindStringSubmatchIndex,
 	// minus the full-match pair). Used for parameter highlighting in reports.
 	MatchLocs []int
+
+	// DataTable holds the step's DataTable rows (if any).
+	// Each element is a row of cell values. The first row is typically
+	// the header row.
+	DataTable [][]string
+
+	// DataSnapshot is a snapshot of ctx.Data() taken after this step
+	// completed. Keys are the data store keys, values are formatted
+	// string representations.
+	DataSnapshot map[string]string
 }
 
 // ScenarioResult holds the execution result of a single scenario.
 type ScenarioResult struct {
+	// ID is the unique UUID for the scenario execution context.
+	ID string
+
 	// FeatureName is the name of the parent feature.
 	FeatureName string
 
@@ -93,6 +106,10 @@ type ScenarioResult struct {
 	// Steps contains the results of the scenario's own steps (excluding
 	// background steps).
 	Steps []StepResult
+
+	// Logs contains captured log entries from ctx.Logger() during the
+	// scenario execution.
+	Logs []LogEntry
 }
 
 // RunResult holds the complete results of a test run.

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -65,6 +66,18 @@ func (d *Data) MustGet(key string) any {
 		d.t.FailNow()
 	}
 	return v
+}
+
+// Snapshot returns a shallow copy of all key-value pairs in the data store.
+// The returned map is safe to read without holding any locks.
+func (d *Data) Snapshot() map[string]any {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	snap := make(map[string]any, len(d.values))
+	for k, v := range d.values {
+		snap[k] = v
+	}
+	return snap
 }
 
 // Context is the execution context passed to all step functions.
@@ -171,4 +184,98 @@ func (p *panicT) Helper() {}
 
 func (p *panicT) Failed() bool {
 	return p.failed
+}
+
+// ── LogEntry & CapturingLogger ──────────────────────────────────────────────
+
+// LogEntry represents a single captured log message.
+type LogEntry struct {
+	Level   string    `json:"level"`   // "DEBUG", "INFO", "WARN", "ERROR"
+	Message string    `json:"message"` // The log message
+	Args    string    `json:"args"`    // Formatted key=value args string
+	Time    time.Time `json:"time"`    // When the entry was recorded
+}
+
+// CapturingLogger implements Logger, capturing all log entries while also
+// forwarding them to a delegate logger (so console output still works).
+// It is safe for concurrent use.
+type CapturingLogger struct {
+	mu       sync.Mutex
+	delegate Logger
+	entries  []LogEntry
+}
+
+// NewCapturingLogger wraps the given delegate logger (may be nil) and
+// captures all log calls.
+func NewCapturingLogger(delegate Logger) *CapturingLogger {
+	return &CapturingLogger{delegate: delegate}
+}
+
+func (cl *CapturingLogger) capture(level, msg string, args ...any) {
+	entry := LogEntry{
+		Level:   level,
+		Message: msg,
+		Args:    formatLogArgs(args),
+		Time:    time.Now(),
+	}
+	cl.mu.Lock()
+	cl.entries = append(cl.entries, entry)
+	cl.mu.Unlock()
+}
+
+func (cl *CapturingLogger) Debug(msg string, args ...any) {
+	cl.capture("DEBUG", msg, args...)
+	if cl.delegate != nil {
+		cl.delegate.Debug(msg, args...)
+	}
+}
+
+func (cl *CapturingLogger) Info(msg string, args ...any) {
+	cl.capture("INFO", msg, args...)
+	if cl.delegate != nil {
+		cl.delegate.Info(msg, args...)
+	}
+}
+
+func (cl *CapturingLogger) Warn(msg string, args ...any) {
+	cl.capture("WARN", msg, args...)
+	if cl.delegate != nil {
+		cl.delegate.Warn(msg, args...)
+	}
+}
+
+func (cl *CapturingLogger) Error(msg string, args ...any) {
+	cl.capture("ERROR", msg, args...)
+	if cl.delegate != nil {
+		cl.delegate.Error(msg, args...)
+	}
+}
+
+// Entries returns a copy of all captured log entries.
+func (cl *CapturingLogger) Entries() []LogEntry {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	out := make([]LogEntry, len(cl.entries))
+	copy(out, cl.entries)
+	return out
+}
+
+// formatLogArgs formats slog-style key/value args into a readable string.
+// e.g. formatLogArgs("count", 3, "name", "alice") → "count=3 name=alice"
+func formatLogArgs(args []any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var b []byte
+	for i := 0; i < len(args); i += 2 {
+		if len(b) > 0 {
+			b = append(b, ' ')
+		}
+		if i+1 < len(args) {
+			b = append(b, fmt.Sprintf("%v=%v", args[i], args[i+1])...)
+		} else {
+			b = append(b, fmt.Sprintf("%v", args[i])...)
+		}
+	}
+	return string(b)
 }

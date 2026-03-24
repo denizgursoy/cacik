@@ -293,6 +293,82 @@ func GenerateHTMLReport(path string, result RunResult) error {
 		"joinTags": func(tags []string) string {
 			return strings.Join(tags, ",")
 		},
+		"hasDataTable": func(step StepResult) bool {
+			return len(step.DataTable) > 0
+		},
+		"hasDataOrLogs": func(s ScenarioResult) bool {
+			if len(s.Logs) > 0 {
+				return true
+			}
+			// Check if any step (feature bg, rule bg, or scenario) has a DataSnapshot
+			for _, st := range s.FeatureBgSteps {
+				if len(st.DataSnapshot) > 0 {
+					return true
+				}
+			}
+			for _, st := range s.RuleBgSteps {
+				if len(st.DataSnapshot) > 0 {
+					return true
+				}
+			}
+			for _, st := range s.Steps {
+				if len(st.DataSnapshot) > 0 {
+					return true
+				}
+			}
+			return false
+		},
+		"renderDataTable": func(rows [][]string) template.HTML {
+			if len(rows) == 0 {
+				return ""
+			}
+			var b strings.Builder
+			b.WriteString(`<table class="step-datatable">`)
+			for ri, row := range rows {
+				b.WriteString("<tr>")
+				for _, cell := range row {
+					tag := "td"
+					if ri == 0 {
+						tag = "th"
+					}
+					b.WriteString(fmt.Sprintf("<%s>%s</%s>", tag, html.EscapeString(cell), tag))
+				}
+				b.WriteString("</tr>")
+			}
+			b.WriteString("</table>")
+			return template.HTML(b.String())
+		},
+		"lastDataSnapshot": func(s ScenarioResult) map[string]string {
+			// Return the last non-empty DataSnapshot from all steps
+			var last map[string]string
+			for _, st := range s.FeatureBgSteps {
+				if len(st.DataSnapshot) > 0 {
+					last = st.DataSnapshot
+				}
+			}
+			for _, st := range s.RuleBgSteps {
+				if len(st.DataSnapshot) > 0 {
+					last = st.DataSnapshot
+				}
+			}
+			for _, st := range s.Steps {
+				if len(st.DataSnapshot) > 0 {
+					last = st.DataSnapshot
+				}
+			}
+			return last
+		},
+		"sortedKeys": func(m map[string]string) []string {
+			keys := make([]string, 0, len(m))
+			for k := range m {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			return keys
+		},
+		"mapGet": func(m map[string]string, key string) string {
+			return m[key]
+		},
 	}).Parse(htmlTemplate)
 	if err != nil {
 		return fmt.Errorf("could not parse HTML template: %w", err)
@@ -496,6 +572,76 @@ const htmlTemplate = `<!DOCTYPE html>
   }
   .scenario.open .chevron { transform: rotate(90deg); }
 
+  /* ── Tabs inside dark block ── */
+  .tab-bar {
+    display: flex; gap: 0.35rem; padding: 0 0 0.4rem 0;
+    border-bottom: 1px solid #2a2b2e; margin-bottom: 0.4rem;
+  }
+  .tab-pill {
+    font-size: 0.72rem; padding: 0.2rem 0.6rem; border-radius: 10px;
+    border: none; cursor: pointer; font-weight: 500;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: transparent; color: #6F737A; transition: all 0.15s;
+  }
+  .tab-pill:hover { color: #BCBEC4; }
+  .tab-pill.active { background: #3574f0; color: #fff; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Inline DataTable (inside Steps tab) ── */
+  .step-datatable {
+    margin: 0.15rem 0 0.3rem 1.7rem;
+    border-collapse: collapse;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem;
+  }
+  .step-datatable td, .step-datatable th {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid #3a3b3e;
+    background: #2a2b2e;
+  }
+  .step-datatable th { color: #CF8E6D; font-weight: 600; }
+  .step-datatable td { color: #BCBEC4; }
+
+  /* ── Data tab ── */
+  .data-table {
+    border-collapse: collapse; width: 100%;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem;
+  }
+  .data-table th {
+    text-align: left; color: #6F737A; font-weight: 500;
+    padding: 0.2rem 0.5rem; border-bottom: 1px solid #3a3b3e;
+    font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em;
+  }
+  .data-table td { padding: 0.2rem 0.5rem; border-bottom: 1px solid #2a2b2e; }
+  .data-table .data-key { color: #CF8E6D; }
+  .data-table .data-val { color: #BCBEC4; word-break: break-all; }
+
+  /* ── Logs tab ── */
+  .log-line {
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem; padding: 0.1rem 0; white-space: pre-wrap;
+  }
+  .log-level { font-weight: 600; }
+  .log-level-DEBUG { color: #6F737A; }
+  .log-level-INFO  { color: #BCBEC4; }
+  .log-level-WARN  { color: #e6b800; }
+  .log-level-ERROR { color: #ff4444; }
+  .log-msg { color: #BCBEC4; }
+  .log-args { color: #6F737A; }
+  .empty-tab-msg {
+    color: #6F737A;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+    font-size: 0.78rem; font-style: italic; padding: 0.5rem 0;
+  }
+
+  /* ── Scenario UUID subtitle ── */
+  .scenario-uuid {
+    font-size: 0.68rem; color: #868e96; font-weight: 400;
+    font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", monospace;
+  }
+
   .empty-msg {
     color: #868e96; font-style: italic; padding: 1rem 0; text-align: center;
   }
@@ -575,6 +721,7 @@ const htmlTemplate = `<!DOCTYPE html>
         <div>
           <span class="scenario-name">{{.Name}}</span>
           {{range .Tags}}<span class="tag">{{.}}</span> {{end}}
+          {{if .ID}}<div class="scenario-uuid">{{.ID}}</div>{{end}}
         </div>
         <div class="scenario-meta">
           <span>{{formatDuration .Duration}}</span>
@@ -582,6 +729,14 @@ const htmlTemplate = `<!DOCTYPE html>
         </div>
       </div>
       <div class="steps">
+        {{if hasDataOrLogs .}}
+        <div class="tab-bar">
+          <button class="tab-pill active" onclick="switchTab(this,'steps')">Steps</button>
+          <button class="tab-pill" onclick="switchTab(this,'data')">Data</button>
+          <button class="tab-pill" onclick="switchTab(this,'logs')">Logs</button>
+        </div>
+        {{end}}
+        <div class="tab-panel active" data-tab="steps">
         <div class="step-group-label"><span class="step-group-kw">Feature:</span> {{.FeatureName}}</div>
         {{if .FeatureBgSteps}}
         <div class="step-group-label"><span class="step-group-kw">Background:</span></div>
@@ -592,6 +747,7 @@ const htmlTemplate = `<!DOCTYPE html>
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}
+        {{if hasDataTable .}}{{renderDataTable .DataTable}}{{end}}
         {{end}}
         {{end}}
         {{if .RuleName}}<div class="step-group-label step-group-rule"><span class="step-group-kw">Rule:</span> {{.RuleName}}</div>{{end}}
@@ -604,6 +760,7 @@ const htmlTemplate = `<!DOCTYPE html>
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}
+        {{if hasDataTable .}}{{renderDataTable .DataTable}}{{end}}
         {{end}}
         {{end}}
         <div class="step-group-label step-group-scenario"><span class="step-group-kw">Scenario:</span> {{.Name}}</div>
@@ -614,6 +771,28 @@ const htmlTemplate = `<!DOCTYPE html>
           <span class="step-duration">{{formatDuration .Duration}}</span>
         </div>
         {{if .Error}}<div class="step-error">{{.Error}}</div>{{end}}
+        {{if hasDataTable .}}{{renderDataTable .DataTable}}{{end}}
+        {{end}}
+        </div>
+        {{if hasDataOrLogs .}}
+        <div class="tab-panel" data-tab="data">
+        {{$snap := lastDataSnapshot .}}
+        {{if $snap}}
+        <table class="data-table"><tr><th>Key</th><th>Value</th></tr>
+        {{range sortedKeys $snap}}<tr><td class="data-key">{{.}}</td><td class="data-val">{{mapGet $snap .}}</td></tr>
+        {{end}}</table>
+        {{else}}
+        <div class="empty-tab-msg">No data stored</div>
+        {{end}}
+        </div>
+        <div class="tab-panel" data-tab="logs">
+        {{if .Logs}}
+        {{range .Logs}}<div class="log-line"><span class="log-level log-level-{{.Level}}">[{{.Level}}]</span> <span class="log-msg">{{.Message}}</span>{{if .Args}} <span class="log-args">{{.Args}}</span>{{end}}</div>
+        {{end}}
+        {{else}}
+        <div class="empty-tab-msg">No logs captured</div>
+        {{end}}
+        </div>
         {{end}}
       </div>
     </div>
@@ -649,6 +828,19 @@ function expandGroup(btn) {
 }
 function collapseGroup(btn) {
   btn.closest('.tag-group').querySelectorAll('.scenario').forEach(function(el) { el.classList.remove('open'); });
+}
+
+// Tab switching
+function switchTab(btn, tabName) {
+  var stepsDiv = btn.closest('.steps');
+  if (!stepsDiv) return;
+  // Deactivate all pills
+  stepsDiv.querySelectorAll('.tab-pill').forEach(function(p) { p.classList.remove('active'); });
+  btn.classList.add('active');
+  // Hide all panels, show selected
+  stepsDiv.querySelectorAll('.tab-panel').forEach(function(p) {
+    if (p.getAttribute('data-tab') === tabName) { p.classList.add('active'); } else { p.classList.remove('active'); }
+  });
 }
 
 // Tag filter
