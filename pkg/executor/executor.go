@@ -137,6 +137,12 @@ func (e *StepExecutor) GetCacikContext() *cacik.Context {
 	return e.cacikCtx
 }
 
+// Steps returns the registered step definitions. The returned slice shares
+// the underlying array with the executor and must not be modified.
+func (e *StepExecutor) Steps() []StepDefinition {
+	return e.steps
+}
+
 // Clone creates a copy of the executor with fresh context but shared step definitions
 func (e *StepExecutor) Clone() *StepExecutor {
 	return &StepExecutor{

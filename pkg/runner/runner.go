@@ -961,8 +961,18 @@ func (c *CucumberRunner) collectScenarios(docs []*documentWithFile) []ScenarioEx
 // resolveAllSteps resolves every step in every scenario against the registered
 // step definitions. Each step's matching definition and captured arguments are
 // stored in the ResolvedStep fields of ScenarioExecution. Fails fast on the
-// first unmatched step.
+// first unmatched step, including a suggestion for the closest matching
+// definition and a code snippet to implement the missing step.
 func (c *CucumberRunner) resolveAllSteps(scenarios []ScenarioExecution) error {
+	steps := c.executor.Steps()
+
+	undefinedErr := func(keyword, text, featureName, scenarioName, featureFile string) error {
+		msg := fmt.Sprintf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
+			text, featureName, scenarioName, featureFile)
+		suggestion := executor.FormatStepSuggestion(keyword, text, steps)
+		return fmt.Errorf("%s%s", msg, suggestion)
+	}
+
 	for i := range scenarios {
 		se := &scenarios[i]
 
@@ -970,8 +980,7 @@ func (c *CucumberRunner) resolveAllSteps(scenarios []ScenarioExecution) error {
 			for _, step := range se.FeatureBackground.Steps {
 				rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
 				if err != nil {
-					return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
-						step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+					return undefinedErr(step.Keyword, step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
 				}
 				se.ResolvedFeatureBgSteps = append(se.ResolvedFeatureBgSteps, rs)
 			}
@@ -981,8 +990,7 @@ func (c *CucumberRunner) resolveAllSteps(scenarios []ScenarioExecution) error {
 			for _, step := range se.RuleBackground.Steps {
 				rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
 				if err != nil {
-					return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
-						step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+					return undefinedErr(step.Keyword, step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
 				}
 				se.ResolvedRuleBgSteps = append(se.ResolvedRuleBgSteps, rs)
 			}
@@ -991,8 +999,7 @@ func (c *CucumberRunner) resolveAllSteps(scenarios []ScenarioExecution) error {
 		for _, step := range se.Scenario.Steps {
 			rs, err := c.executor.ResolveStep(step.Keyword, step.Text, step.DataTable)
 			if err != nil {
-				return fmt.Errorf("no matching step definition found for: %q in Feature: %s / Scenario: %s (%s)",
-					step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
+				return undefinedErr(step.Keyword, step.Text, se.FeatureName, se.Scenario.Name, se.FeatureFile)
 			}
 			se.ResolvedScenarioSteps = append(se.ResolvedScenarioSteps, rs)
 		}
